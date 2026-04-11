@@ -16,10 +16,12 @@ use std::io;
 const PAGE_STEP: usize = 10;
 const HELP_POPUP_WIDTH: u16 = 64;
 const ALT_BG: Color = Color::Indexed(236);
+const SEARCH_HIT_BG: Color = Color::Indexed(58);
 
 enum InputMode {
     Command(String),
     Filter(String),
+    Search(String),
 }
 
 pub struct App {
@@ -28,6 +30,8 @@ pub struct App {
     bg_flags: Vec<bool>,
     filtered_view: Vec<usize>,
     filter: Option<String>,
+    search: Option<String>,
+    search_matches: Vec<usize>,
     input_mode: Option<InputMode>,
     show_help: bool,
     status_msg: Option<String>,
@@ -47,6 +51,8 @@ impl App {
             bg_flags,
             filtered_view,
             filter: None,
+            search: None,
+            search_matches: Vec::new(),
             input_mode: None,
             show_help: false,
             status_msg: None,
@@ -118,6 +124,12 @@ impl App {
         self.status_msg = None;
     }
 
+    fn enter_search_mode(&mut self) {
+        let existing = self.search.clone().unwrap_or_default();
+        self.input_mode = Some(InputMode::Search(existing));
+        self.status_msg = None;
+    }
+
     fn goto_step(&mut self, step_num: usize) {
         if self.filtered_view.is_empty() {
             self.status_msg = Some("no steps to navigate".into());
@@ -165,6 +177,7 @@ impl App {
         self.filter = Some(trimmed.to_string());
         self.filtered_view = indices;
         self.list_state.select(Some(0));
+        self.recompute_search_matches();
     }
 
     fn clear_filter(&mut self) {
@@ -174,6 +187,89 @@ impl App {
             self.list_state.select(None);
         } else {
             self.list_state.select(Some(0));
+        }
+        self.recompute_search_matches();
+    }
+
+    fn apply_search(&mut self, query: &str) {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            self.clear_search();
+            return;
+        }
+        self.search = Some(trimmed.to_string());
+        self.recompute_search_matches();
+        if self.search_matches.is_empty() {
+            self.status_msg = Some(format!("no matches for '{trimmed}'"));
+            self.search = None;
+            return;
+        }
+        // Jump to first match at-or-after the current selection, wrapping if needed.
+        let current = self.list_state.selected().unwrap_or(0);
+        let target = self
+            .search_matches
+            .iter()
+            .copied()
+            .find(|&idx| idx >= current)
+            .or_else(|| self.search_matches.first().copied());
+        if let Some(idx) = target {
+            self.list_state.select(Some(idx));
+        }
+    }
+
+    fn clear_search(&mut self) {
+        self.search = None;
+        self.search_matches.clear();
+    }
+
+    fn recompute_search_matches(&mut self) {
+        self.search_matches.clear();
+        let Some(query) = self.search.as_deref() else {
+            return;
+        };
+        let needle = query.to_lowercase();
+        for (view_idx, &orig) in self.filtered_view.iter().enumerate() {
+            let Some(step) = self.steps.get(orig) else {
+                continue;
+            };
+            if step.label.to_lowercase().contains(&needle)
+                || step.detail.to_lowercase().contains(&needle)
+            {
+                self.search_matches.push(view_idx);
+            }
+        }
+    }
+
+    fn next_match(&mut self) {
+        if self.search_matches.is_empty() {
+            return;
+        }
+        let current = self.list_state.selected().unwrap_or(0);
+        let target = self
+            .search_matches
+            .iter()
+            .copied()
+            .find(|&idx| idx > current)
+            .or_else(|| self.search_matches.first().copied());
+        if let Some(idx) = target {
+            self.list_state.select(Some(idx));
+        }
+    }
+
+    fn prev_match(&mut self) {
+        if self.search_matches.is_empty() {
+            return;
+        }
+        let current = self.list_state.selected().unwrap_or(0);
+        let target = self
+            .search_matches
+            .iter()
+            .copied()
+            .rev()
+            .find(|&idx| idx < current)
+            .or_else(|| self.search_matches.last().copied());
+        if let Some(idx) = target {
+            self.list_state.select(Some(idx));
         }
     }
 }
@@ -267,11 +363,15 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
             let items: Vec<ListItem> = app
                 .filtered_view
                 .iter()
-                .filter_map(|&orig_idx| {
+                .enumerate()
+                .filter_map(|(view_idx, &orig_idx)| {
                     let s = app.steps.get(orig_idx)?;
                     let color = kind_color(s.kind);
                     let mut style = Style::default().fg(color);
-                    if app.bg_flags.get(orig_idx).copied().unwrap_or(false) {
+                    let is_match = app.search_matches.binary_search(&view_idx).is_ok();
+                    if is_match {
+                        style = style.bg(SEARCH_HIT_BG).add_modifier(Modifier::BOLD);
+                    } else if app.bg_flags.get(orig_idx).copied().unwrap_or(false) {
                         style = style.bg(ALT_BG);
                     }
                     Some(ListItem::new(Line::from(vec![Span::styled(
@@ -283,11 +383,16 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
 
             let total = app.visible_count();
             let current = app.list_state.selected().map_or(0, |i| i + 1);
-            let title = if let Some(q) = &app.filter {
-                format!(" agx — {current}/{total}   [filter: {q}]   [? help] ")
-            } else {
-                format!(" agx — {current}/{total}   [? help] ")
-            };
+            let mut title_parts: Vec<String> = vec![format!(" agx — {current}/{total}")];
+            if let Some(q) = &app.filter {
+                title_parts.push(format!("[filter: {q}]"));
+            }
+            if let Some(q) = &app.search {
+                let hits = app.search_matches.len();
+                title_parts.push(format!("[search: {q} · {hits}]"));
+            }
+            title_parts.push("[? help] ".to_string());
+            let title = title_parts.join("   ");
 
             let list = List::new(items)
                 .block(Block::default().borders(Borders::ALL).title(title))
@@ -330,7 +435,7 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
 
             f.render_widget(detail_widget, chunks[1]);
 
-            // Bottom bar: input line (command / filter), or status msg, or scrubbing gauge.
+            // Bottom bar: input line (command / filter / search), status msg, or scrubbing gauge.
             match &app.input_mode {
                 Some(InputMode::Command(buf)) => {
                     let line = Paragraph::new(Line::from(vec![
@@ -363,6 +468,24 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                     ]));
                     f.render_widget(line, outer[1]);
                 }
+                Some(InputMode::Search(buf)) => {
+                    let line = Paragraph::new(Line::from(vec![
+                        Span::styled(
+                            "/",
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw(buf.as_str()),
+                        Span::styled(
+                            "█",
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::SLOW_BLINK),
+                        ),
+                    ]));
+                    f.render_widget(line, outer[1]);
+                }
                 None => {
                     if let Some(msg) = &app.status_msg {
                         let line = Paragraph::new(Line::from(vec![Span::styled(
@@ -378,11 +501,14 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                             let r = current as f64 / total as f64;
                             r.clamp(0.0, 1.0)
                         };
-                        let label = if let Some(q) = &app.filter {
-                            format!("{current}/{total}  (filter: {q})")
-                        } else {
-                            format!("{current}/{total}")
-                        };
+                        let mut parts = vec![format!("{current}/{total}")];
+                        if let Some(q) = &app.filter {
+                            parts.push(format!("filter: {q}"));
+                        }
+                        if let Some(q) = &app.search {
+                            parts.push(format!("search: {q} ({})", app.search_matches.len()));
+                        }
+                        let label = parts.join("  ");
                         let gauge = Gauge::default()
                             .gauge_style(
                                 Style::default()
@@ -420,8 +546,17 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                         "Filter",
                         Style::default().add_modifier(Modifier::BOLD),
                     )),
-                    Line::from("  f               open filter prompt"),
+                    Line::from("  f               open filter prompt (hides non-matching rows)"),
                     Line::from("  (empty enter)   clear current filter"),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "Search",
+                        Style::default().add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from("  /               open search prompt (highlights matches)"),
+                    Line::from("  n               next match"),
+                    Line::from("  N               prev match"),
+                    Line::from("  (empty enter)   clear current search"),
                     Line::from(""),
                     Line::from(Span::styled(
                         "Other",
@@ -487,7 +622,7 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 continue;
             }
 
-            // Input mode (command / filter): its own keybinding scope.
+            // Input mode (command / filter / search): its own keybinding scope.
             if app.input_mode.is_some() {
                 match key.code {
                     KeyCode::Esc => {
@@ -499,19 +634,26 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                         match mode {
                             Some(InputMode::Command(buf)) => app.execute_command(&buf),
                             Some(InputMode::Filter(buf)) => app.apply_filter(&buf),
+                            Some(InputMode::Search(buf)) => app.apply_search(&buf),
                             None => {}
                         }
                     }
                     KeyCode::Backspace => {
-                        if let Some(InputMode::Command(buf) | InputMode::Filter(buf)) =
-                            &mut app.input_mode
+                        if let Some(
+                            InputMode::Command(buf)
+                            | InputMode::Filter(buf)
+                            | InputMode::Search(buf),
+                        ) = &mut app.input_mode
                         {
                             buf.pop();
                         }
                     }
                     KeyCode::Char(c) => {
-                        if let Some(InputMode::Command(buf) | InputMode::Filter(buf)) =
-                            &mut app.input_mode
+                        if let Some(
+                            InputMode::Command(buf)
+                            | InputMode::Filter(buf)
+                            | InputMode::Search(buf),
+                        ) = &mut app.input_mode
                         {
                             buf.push(c);
                         }
@@ -528,6 +670,9 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 KeyCode::Char('?') | KeyCode::F(1) => app.toggle_help(),
                 KeyCode::Char(':') => app.enter_command_mode(),
                 KeyCode::Char('f') => app.enter_filter_mode(),
+                KeyCode::Char('/') => app.enter_search_mode(),
+                KeyCode::Char('n') => app.next_match(),
+                KeyCode::Char('N') => app.prev_match(),
                 KeyCode::Down | KeyCode::Char('j') => app.next(),
                 KeyCode::Up | KeyCode::Char('k') => app.prev(),
                 KeyCode::PageDown | KeyCode::Char('d') => app.page_down(PAGE_STEP),
@@ -579,7 +724,12 @@ mod tests {
         vec![
             user_text_step("write a fibonacci function"),
             tool_use_step("t1", "Read", "{}"),
-            tool_result_step("t1", "def fib...", Some("Read"), Some("{}")),
+            tool_result_step(
+                "t1",
+                "def fib(n):\n    return ...",
+                Some("Read"),
+                Some("{}"),
+            ),
             tool_use_step("t2", "Bash", "{}"),
             tool_result_step("t2", "0 1 1 2 3 5", Some("Bash"), Some("{}")),
             assistant_text_step("done"),
@@ -588,24 +738,21 @@ mod tests {
 
     #[test]
     fn goto_step_selects_valid_index() {
-        let steps = sample_steps();
-        let mut app = App::new(steps);
+        let mut app = App::new(sample_steps());
         app.goto_step(2);
         assert_eq!(app.list_state.selected(), Some(1));
     }
 
     #[test]
     fn goto_step_clamps_out_of_bounds() {
-        let steps = sample_steps();
-        let mut app = App::new(steps);
+        let mut app = App::new(sample_steps());
         app.goto_step(999);
         assert_eq!(app.list_state.selected(), Some(5));
     }
 
     #[test]
     fn goto_step_rejects_zero() {
-        let steps = sample_steps();
-        let mut app = App::new(steps);
+        let mut app = App::new(sample_steps());
         app.list_state.select(Some(0));
         app.goto_step(0);
         assert_eq!(app.list_state.selected(), Some(0));
@@ -614,16 +761,14 @@ mod tests {
 
     #[test]
     fn execute_command_parses_number() {
-        let steps = sample_steps();
-        let mut app = App::new(steps);
+        let mut app = App::new(sample_steps());
         app.execute_command("3");
         assert_eq!(app.list_state.selected(), Some(2));
     }
 
     #[test]
     fn execute_command_ignores_empty_input() {
-        let steps = sample_steps();
-        let mut app = App::new(steps);
+        let mut app = App::new(sample_steps());
         app.list_state.select(Some(0));
         app.execute_command("   ");
         assert_eq!(app.list_state.selected(), Some(0));
@@ -632,18 +777,15 @@ mod tests {
 
     #[test]
     fn execute_command_reports_unknown() {
-        let steps = sample_steps();
-        let mut app = App::new(steps);
+        let mut app = App::new(sample_steps());
         app.execute_command("nope");
         assert!(app.status_msg.as_ref().unwrap().contains("unknown"));
     }
 
     #[test]
     fn apply_filter_by_tool_name_substring_case_insensitive() {
-        let steps = sample_steps();
-        let mut app = App::new(steps);
+        let mut app = App::new(sample_steps());
         app.apply_filter("read");
-        // Matches step 2 (tool_use Read) and step 3 (tool_result Read)
         assert_eq!(app.visible_count(), 2);
         assert_eq!(app.filter.as_deref(), Some("read"));
         assert_eq!(app.list_state.selected(), Some(0));
@@ -651,17 +793,14 @@ mod tests {
 
     #[test]
     fn apply_filter_by_kind_prefix() {
-        let steps = sample_steps();
-        let mut app = App::new(steps);
+        let mut app = App::new(sample_steps());
         app.apply_filter("[tool]");
-        // Matches both [tool] steps
         assert_eq!(app.visible_count(), 2);
     }
 
     #[test]
     fn apply_filter_empty_clears_existing_filter() {
-        let steps = sample_steps();
-        let mut app = App::new(steps);
+        let mut app = App::new(sample_steps());
         app.apply_filter("Read");
         assert_eq!(app.visible_count(), 2);
         app.apply_filter("");
@@ -671,18 +810,16 @@ mod tests {
 
     #[test]
     fn apply_filter_no_matches_keeps_previous_view_and_sets_error() {
-        let steps = sample_steps();
-        let mut app = App::new(steps);
+        let mut app = App::new(sample_steps());
         app.apply_filter("nonexistent");
-        assert_eq!(app.visible_count(), 6); // unchanged
-        assert!(app.filter.is_none()); // filter not installed
+        assert_eq!(app.visible_count(), 6);
+        assert!(app.filter.is_none());
         assert!(app.status_msg.as_ref().unwrap().contains("no matches"));
     }
 
     #[test]
     fn clear_filter_restores_full_view() {
-        let steps = sample_steps();
-        let mut app = App::new(steps);
+        let mut app = App::new(sample_steps());
         app.apply_filter("Read");
         app.clear_filter();
         assert_eq!(app.visible_count(), 6);
@@ -692,14 +829,13 @@ mod tests {
 
     #[test]
     fn navigation_under_filter_operates_on_filtered_view() {
-        let steps = sample_steps();
-        let mut app = App::new(steps);
+        let mut app = App::new(sample_steps());
         app.apply_filter("[tool]");
         assert_eq!(app.visible_count(), 2);
         assert_eq!(app.list_state.selected(), Some(0));
         app.next();
         assert_eq!(app.list_state.selected(), Some(1));
-        app.next(); // clamps to last
+        app.next();
         assert_eq!(app.list_state.selected(), Some(1));
         app.home();
         assert_eq!(app.list_state.selected(), Some(0));
@@ -709,10 +845,109 @@ mod tests {
 
     #[test]
     fn goto_step_under_filter_uses_visible_positions() {
-        let steps = sample_steps();
-        let mut app = App::new(steps);
+        let mut app = App::new(sample_steps());
         app.apply_filter("[tool]");
-        app.goto_step(2); // 2nd visible row
+        app.goto_step(2);
         assert_eq!(app.list_state.selected(), Some(1));
+    }
+
+    #[test]
+    fn apply_search_finds_matches_in_label_and_detail() {
+        let mut app = App::new(sample_steps());
+        app.apply_search("fib");
+        // "fibonacci" in user text + "fib(n)" in Read result = 2 matches
+        assert_eq!(app.search_matches.len(), 2);
+        assert_eq!(app.search.as_deref(), Some("fib"));
+    }
+
+    #[test]
+    fn apply_search_case_insensitive() {
+        let mut app = App::new(sample_steps());
+        app.apply_search("FIBONACCI");
+        assert_eq!(app.search_matches.len(), 1);
+    }
+
+    #[test]
+    fn apply_search_jumps_to_first_match_at_or_after_current() {
+        let mut app = App::new(sample_steps());
+        app.list_state.select(Some(2));
+        app.apply_search("fib");
+        // Current is step 2 (tool_use Read). Matches: step 0 (user text) and step 2 (Read result).
+        // Jump should go to step 2 (the at-or-after match)
+        assert_eq!(app.list_state.selected(), Some(2));
+    }
+
+    #[test]
+    fn apply_search_empty_clears() {
+        let mut app = App::new(sample_steps());
+        app.apply_search("fib");
+        assert!(!app.search_matches.is_empty());
+        app.apply_search("");
+        assert!(app.search.is_none());
+        assert!(app.search_matches.is_empty());
+    }
+
+    #[test]
+    fn apply_search_no_matches_sets_error() {
+        let mut app = App::new(sample_steps());
+        app.apply_search("zzzzz");
+        assert!(app.search.is_none());
+        assert!(app.search_matches.is_empty());
+        assert!(app.status_msg.as_ref().unwrap().contains("no matches"));
+    }
+
+    #[test]
+    fn next_match_advances_and_wraps() {
+        let mut app = App::new(sample_steps());
+        app.list_state.select(Some(0));
+        app.apply_search("fib"); // matches 0 and 2
+        assert_eq!(app.list_state.selected(), Some(0));
+        app.next_match();
+        assert_eq!(app.list_state.selected(), Some(2));
+        app.next_match(); // wrap to first
+        assert_eq!(app.list_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn prev_match_goes_back_and_wraps() {
+        let mut app = App::new(sample_steps());
+        app.list_state.select(Some(0));
+        app.apply_search("fib");
+        assert_eq!(app.list_state.selected(), Some(0));
+        app.prev_match(); // wrap to last match
+        assert_eq!(app.list_state.selected(), Some(2));
+        app.prev_match();
+        assert_eq!(app.list_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn search_respects_active_filter() {
+        let mut app = App::new(sample_steps());
+        app.apply_filter("[tool]"); // leaves only steps 1 and 3 in filtered_view
+        app.apply_search("Read"); // should find step 1 (Read tool_use), position 0 in filtered_view
+        assert_eq!(app.search_matches.len(), 1);
+        assert_eq!(app.search_matches[0], 0);
+    }
+
+    #[test]
+    fn clear_search_removes_highlights() {
+        let mut app = App::new(sample_steps());
+        app.apply_search("fib");
+        assert!(!app.search_matches.is_empty());
+        app.clear_search();
+        assert!(app.search.is_none());
+        assert!(app.search_matches.is_empty());
+    }
+
+    #[test]
+    fn search_matches_recompute_when_filter_changes() {
+        let mut app = App::new(sample_steps());
+        app.apply_search("fib"); // matches 2 steps in unfiltered view
+        assert_eq!(app.search_matches.len(), 2);
+        app.apply_filter("[tool]"); // filtered_view is now just the 2 tool steps
+        // "fib" matches step 1 (Read result contains "fib(n)") but Read result is
+        // not in [tool] filter (it's [result]), and user text not in filter either.
+        // So 0 matches now.
+        assert_eq!(app.search_matches.len(), 0);
     }
 }
