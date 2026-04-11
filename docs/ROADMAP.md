@@ -19,9 +19,9 @@ Make agx powerful enough before the public release that cloning it is unambiguou
 
 | # | Feature | Status | Notes |
 |---|---|---|---|
-| 1 | Alternating step colors | planned | Distinct bg per tool call group, visual clarity for long sessions |
-| 2 | Time-travel scrubbing bar | planned | Bottom progress bar, scrub indicator |
-| 3 | Jump to step (`:42`) | planned | Command mode prompt, number jump |
+| 1 | Alternating step colors | ✅ done | Commit `6b38d9f`. Distinct bg per tool call group. |
+| 2 | Time-travel scrubbing bar | ✅ done | Commit `6b38d9f`. Bottom progress bar with Gauge widget. |
+| 3 | Jump to step (`:42`) | ✅ done | Commit `6b38d9f`. Command mode via `:`, number jump. |
 | 8 | Backtrack / error / retry marker detection | planned | Auto-detect retry patterns and tool errors from session structure |
 | 9 | Dual-cursor conversation panel | planned | Three-pane layout: timeline / conversation / detail. Cursor syncs between panes. Structural refactor. |
 | 10 | Branch / fork visualization | planned | Indent and tree display for parallel tool calls. Depends on feature 9. |
@@ -30,12 +30,14 @@ Make agx powerful enough before the public release that cloning it is unambiguou
 
 | # | Feature | Status | Notes |
 |---|---|---|---|
-| 4 | Filter by tool name / step kind | planned | `f` opens filter prompt, list filters live |
+| 4 | Filter by tool name / step kind | ✅ done | Commit `76e2f94`. `f` opens filter prompt, case-insensitive substring match against step labels. |
 | 5 | Content search (`/pattern`) | planned | Match highlight, `n`/`N` to navigate hits |
 | 6 | Bookmarks | planned | `m<char>` marks, `'<char>` jumps |
 | 7 | Mouse support | planned | Click-to-select, scroll-to-navigate, drag scrubbing bar |
 | 11 | Vim mode (`--vim`) | planned | Normal/Insert, hjkl/w/b/e, `:` commands, `/` search |
 | 12 | Multi-session browser | planned | No args → interactive picker across Claude / Codex / Gemini recent sessions |
+
+**Progress: 4/12 features done** (~1.5 days of work). Remaining: 8 features, ~7.5 days.
 
 ## Build order (dependency-sorted)
 
