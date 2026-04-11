@@ -17,12 +17,19 @@ const PAGE_STEP: usize = 10;
 const HELP_POPUP_WIDTH: u16 = 64;
 const ALT_BG: Color = Color::Indexed(236);
 
+enum InputMode {
+    Command(String),
+    Filter(String),
+}
+
 pub struct App {
     steps: Vec<Step>,
     list_state: ListState,
     bg_flags: Vec<bool>,
+    filtered_view: Vec<usize>,
+    filter: Option<String>,
+    input_mode: Option<InputMode>,
     show_help: bool,
-    command_mode: Option<String>,
     status_msg: Option<String>,
 }
 
@@ -33,27 +40,34 @@ impl App {
             list_state.select(Some(0));
         }
         let bg_flags = compute_bg_flags(&steps);
+        let filtered_view: Vec<usize> = (0..steps.len()).collect();
         Self {
             steps,
             list_state,
             bg_flags,
+            filtered_view,
+            filter: None,
+            input_mode: None,
             show_help: false,
-            command_mode: None,
             status_msg: None,
         }
     }
 
+    fn visible_count(&self) -> usize {
+        self.filtered_view.len()
+    }
+
     fn next(&mut self) {
-        if self.steps.is_empty() {
+        if self.filtered_view.is_empty() {
             return;
         }
         let i = self.list_state.selected().unwrap_or(0);
-        let next = (i + 1).min(self.steps.len() - 1);
+        let next = (i + 1).min(self.filtered_view.len() - 1);
         self.list_state.select(Some(next));
     }
 
     fn prev(&mut self) {
-        if self.steps.is_empty() {
+        if self.filtered_view.is_empty() {
             return;
         }
         let i = self.list_state.selected().unwrap_or(0);
@@ -61,16 +75,16 @@ impl App {
     }
 
     fn page_down(&mut self, n: usize) {
-        if self.steps.is_empty() {
+        if self.filtered_view.is_empty() {
             return;
         }
         let i = self.list_state.selected().unwrap_or(0);
-        let next = (i + n).min(self.steps.len() - 1);
+        let next = (i + n).min(self.filtered_view.len() - 1);
         self.list_state.select(Some(next));
     }
 
     fn page_up(&mut self, n: usize) {
-        if self.steps.is_empty() {
+        if self.filtered_view.is_empty() {
             return;
         }
         let i = self.list_state.selected().unwrap_or(0);
@@ -78,14 +92,14 @@ impl App {
     }
 
     fn home(&mut self) {
-        if !self.steps.is_empty() {
+        if !self.filtered_view.is_empty() {
             self.list_state.select(Some(0));
         }
     }
 
     fn end(&mut self) {
-        if !self.steps.is_empty() {
-            self.list_state.select(Some(self.steps.len() - 1));
+        if !self.filtered_view.is_empty() {
+            self.list_state.select(Some(self.filtered_view.len() - 1));
         }
     }
 
@@ -94,20 +108,26 @@ impl App {
     }
 
     fn enter_command_mode(&mut self) {
-        self.command_mode = Some(String::new());
+        self.input_mode = Some(InputMode::Command(String::new()));
+        self.status_msg = None;
+    }
+
+    fn enter_filter_mode(&mut self) {
+        let existing = self.filter.clone().unwrap_or_default();
+        self.input_mode = Some(InputMode::Filter(existing));
         self.status_msg = None;
     }
 
     fn goto_step(&mut self, step_num: usize) {
-        if self.steps.is_empty() {
-            self.status_msg = Some("no steps loaded".into());
+        if self.filtered_view.is_empty() {
+            self.status_msg = Some("no steps to navigate".into());
             return;
         }
         if step_num == 0 {
             self.status_msg = Some("step number must be >= 1".into());
             return;
         }
-        let idx = (step_num - 1).min(self.steps.len() - 1);
+        let idx = (step_num - 1).min(self.filtered_view.len() - 1);
         self.list_state.select(Some(idx));
     }
 
@@ -121,6 +141,39 @@ impl App {
             Err(_) => {
                 self.status_msg = Some(format!("unknown command: :{trimmed}"));
             }
+        }
+    }
+
+    fn apply_filter(&mut self, query: &str) {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            self.clear_filter();
+            return;
+        }
+        let needle = trimmed.to_lowercase();
+        let indices: Vec<usize> = self
+            .steps
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.label.to_lowercase().contains(&needle))
+            .map(|(i, _)| i)
+            .collect();
+        if indices.is_empty() {
+            self.status_msg = Some(format!("no matches for '{trimmed}'"));
+            return;
+        }
+        self.filter = Some(trimmed.to_string());
+        self.filtered_view = indices;
+        self.list_state.select(Some(0));
+    }
+
+    fn clear_filter(&mut self) {
+        self.filter = None;
+        self.filtered_view = (0..self.steps.len()).collect();
+        if self.filtered_view.is_empty() {
+            self.list_state.select(None);
+        } else {
+            self.list_state.select(Some(0));
         }
     }
 }
@@ -212,22 +265,29 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 .split(outer[0]);
 
             let items: Vec<ListItem> = app
-                .steps
+                .filtered_view
                 .iter()
-                .enumerate()
-                .map(|(i, s)| {
+                .filter_map(|&orig_idx| {
+                    let s = app.steps.get(orig_idx)?;
                     let color = kind_color(s.kind);
                     let mut style = Style::default().fg(color);
-                    if app.bg_flags.get(i).copied().unwrap_or(false) {
+                    if app.bg_flags.get(orig_idx).copied().unwrap_or(false) {
                         style = style.bg(ALT_BG);
                     }
-                    ListItem::new(Line::from(vec![Span::styled(s.label.as_str(), style)]))
+                    Some(ListItem::new(Line::from(vec![Span::styled(
+                        s.label.as_str(),
+                        style,
+                    )])))
                 })
                 .collect();
 
-            let total = app.steps.len();
+            let total = app.visible_count();
             let current = app.list_state.selected().map_or(0, |i| i + 1);
-            let title = format!(" agx — {current}/{total}   [? help] ");
+            let title = if let Some(q) = &app.filter {
+                format!(" agx — {current}/{total}   [filter: {q}]   [? help] ")
+            } else {
+                format!(" agx — {current}/{total}   [? help] ")
+            };
 
             let list = List::new(items)
                 .block(Block::default().borders(Borders::ALL).title(title))
@@ -242,7 +302,8 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
             let (detail_text, detail_kind) = app
                 .list_state
                 .selected()
-                .and_then(|i| app.steps.get(i))
+                .and_then(|i| app.filtered_view.get(i).copied())
+                .and_then(|orig| app.steps.get(orig))
                 .map_or_else(
                     || (String::new(), None),
                     |s| (s.detail.clone(), Some(s.kind)),
@@ -269,44 +330,71 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
 
             f.render_widget(detail_widget, chunks[1]);
 
-            // Bottom bar: command input if in command mode, else scrubbing gauge.
-            if let Some(input) = &app.command_mode {
-                let line = Paragraph::new(Line::from(vec![
-                    Span::styled(":", Style::default().fg(Color::Yellow)),
-                    Span::raw(input.as_str()),
-                    Span::styled(
-                        "█",
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::SLOW_BLINK),
-                    ),
-                ]));
-                f.render_widget(line, outer[1]);
-            } else if let Some(msg) = &app.status_msg {
-                let line = Paragraph::new(Line::from(vec![Span::styled(
-                    msg.as_str(),
-                    Style::default().fg(Color::Red),
-                )]));
-                f.render_widget(line, outer[1]);
-            } else {
-                let ratio = if total == 0 {
-                    0.0
-                } else {
-                    #[allow(clippy::cast_precision_loss)]
-                    let r = current as f64 / total as f64;
-                    r.clamp(0.0, 1.0)
-                };
-                let label = format!("{current}/{total}");
-                let gauge = Gauge::default()
-                    .gauge_style(
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .bg(Color::Reset)
-                            .add_modifier(Modifier::BOLD),
-                    )
-                    .ratio(ratio)
-                    .label(label);
-                f.render_widget(gauge, outer[1]);
+            // Bottom bar: input line (command / filter), or status msg, or scrubbing gauge.
+            match &app.input_mode {
+                Some(InputMode::Command(buf)) => {
+                    let line = Paragraph::new(Line::from(vec![
+                        Span::styled(":", Style::default().fg(Color::Yellow)),
+                        Span::raw(buf.as_str()),
+                        Span::styled(
+                            "█",
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::SLOW_BLINK),
+                        ),
+                    ]));
+                    f.render_widget(line, outer[1]);
+                }
+                Some(InputMode::Filter(buf)) => {
+                    let line = Paragraph::new(Line::from(vec![
+                        Span::styled(
+                            "filter> ",
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw(buf.as_str()),
+                        Span::styled(
+                            "█",
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::SLOW_BLINK),
+                        ),
+                    ]));
+                    f.render_widget(line, outer[1]);
+                }
+                None => {
+                    if let Some(msg) = &app.status_msg {
+                        let line = Paragraph::new(Line::from(vec![Span::styled(
+                            msg.as_str(),
+                            Style::default().fg(Color::Red),
+                        )]));
+                        f.render_widget(line, outer[1]);
+                    } else {
+                        let ratio = if total == 0 {
+                            0.0
+                        } else {
+                            #[allow(clippy::cast_precision_loss)]
+                            let r = current as f64 / total as f64;
+                            r.clamp(0.0, 1.0)
+                        };
+                        let label = if let Some(q) = &app.filter {
+                            format!("{current}/{total}  (filter: {q})")
+                        } else {
+                            format!("{current}/{total}")
+                        };
+                        let gauge = Gauge::default()
+                            .gauge_style(
+                                Style::default()
+                                    .fg(Color::Cyan)
+                                    .bg(Color::Reset)
+                                    .add_modifier(Modifier::BOLD),
+                            )
+                            .ratio(ratio)
+                            .label(label);
+                        f.render_widget(gauge, outer[1]);
+                    }
+                }
             }
 
             if app.show_help {
@@ -326,7 +414,14 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                     Line::from("  PgUp / u        jump 10 steps back"),
                     Line::from("  Home / g        first step"),
                     Line::from("  End  / G        last step"),
-                    Line::from("  :N              jump to step N"),
+                    Line::from("  :N              jump to visible row N"),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "Filter",
+                        Style::default().add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from("  f               open filter prompt"),
+                    Line::from("  (empty enter)   clear current filter"),
                     Line::from(""),
                     Line::from(Span::styled(
                         "Other",
@@ -392,23 +487,34 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 continue;
             }
 
-            // Command mode: own keybinding scope.
-            if let Some(input) = &mut app.command_mode {
+            // Input mode (command / filter): its own keybinding scope.
+            if app.input_mode.is_some() {
                 match key.code {
                     KeyCode::Esc => {
-                        app.command_mode = None;
+                        app.input_mode = None;
                         app.status_msg = None;
                     }
                     KeyCode::Enter => {
-                        let buf = std::mem::take(input);
-                        app.command_mode = None;
-                        app.execute_command(&buf);
+                        let mode = app.input_mode.take();
+                        match mode {
+                            Some(InputMode::Command(buf)) => app.execute_command(&buf),
+                            Some(InputMode::Filter(buf)) => app.apply_filter(&buf),
+                            None => {}
+                        }
                     }
                     KeyCode::Backspace => {
-                        input.pop();
+                        if let Some(InputMode::Command(buf) | InputMode::Filter(buf)) =
+                            &mut app.input_mode
+                        {
+                            buf.pop();
+                        }
                     }
                     KeyCode::Char(c) => {
-                        input.push(c);
+                        if let Some(InputMode::Command(buf) | InputMode::Filter(buf)) =
+                            &mut app.input_mode
+                        {
+                            buf.push(c);
+                        }
                     }
                     _ => {}
                 }
@@ -421,6 +527,7 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 KeyCode::Char('q') | KeyCode::Esc => break,
                 KeyCode::Char('?') | KeyCode::F(1) => app.toggle_help(),
                 KeyCode::Char(':') => app.enter_command_mode(),
+                KeyCode::Char('f') => app.enter_filter_mode(),
                 KeyCode::Down | KeyCode::Char('j') => app.next(),
                 KeyCode::Up | KeyCode::Char('k') => app.prev(),
                 KeyCode::PageDown | KeyCode::Char('d') => app.page_down(PAGE_STEP),
@@ -452,14 +559,14 @@ mod tests {
             assistant_text_step("done"),
         ];
         let flags = compute_bg_flags(&steps);
-        assert!(!flags[0]); // user text — no bg
-        assert!(!flags[1]); // tool_use 1 — parity 0
-        assert!(!flags[2]); // tool_result 1 — parity 0
-        assert!(flags[3]); // tool_use 2 — parity 1
-        assert!(flags[4]); // tool_result 2 — parity 1
-        assert!(!flags[5]); // tool_use 3 — parity 0
-        assert!(!flags[6]); // tool_result 3 — parity 0
-        assert!(!flags[7]); // assistant text — no bg
+        assert!(!flags[0]);
+        assert!(!flags[1]);
+        assert!(!flags[2]);
+        assert!(flags[3]);
+        assert!(flags[4]);
+        assert!(!flags[5]);
+        assert!(!flags[6]);
+        assert!(!flags[7]);
     }
 
     #[test]
@@ -468,13 +575,20 @@ mod tests {
         assert!(flags.is_empty());
     }
 
+    fn sample_steps() -> Vec<Step> {
+        vec![
+            user_text_step("write a fibonacci function"),
+            tool_use_step("t1", "Read", "{}"),
+            tool_result_step("t1", "def fib...", Some("Read"), Some("{}")),
+            tool_use_step("t2", "Bash", "{}"),
+            tool_result_step("t2", "0 1 1 2 3 5", Some("Bash"), Some("{}")),
+            assistant_text_step("done"),
+        ]
+    }
+
     #[test]
     fn goto_step_selects_valid_index() {
-        let steps = vec![
-            user_text_step("a"),
-            user_text_step("b"),
-            user_text_step("c"),
-        ];
+        let steps = sample_steps();
         let mut app = App::new(steps);
         app.goto_step(2);
         assert_eq!(app.list_state.selected(), Some(1));
@@ -482,31 +596,25 @@ mod tests {
 
     #[test]
     fn goto_step_clamps_out_of_bounds() {
-        let steps = vec![user_text_step("a"), user_text_step("b")];
+        let steps = sample_steps();
         let mut app = App::new(steps);
         app.goto_step(999);
-        assert_eq!(app.list_state.selected(), Some(1));
+        assert_eq!(app.list_state.selected(), Some(5));
     }
 
     #[test]
     fn goto_step_rejects_zero() {
-        let steps = vec![user_text_step("a"), user_text_step("b")];
+        let steps = sample_steps();
         let mut app = App::new(steps);
         app.list_state.select(Some(0));
         app.goto_step(0);
-        // position unchanged, error message set
         assert_eq!(app.list_state.selected(), Some(0));
         assert!(app.status_msg.as_ref().unwrap().contains(">= 1"));
     }
 
     #[test]
     fn execute_command_parses_number() {
-        let steps = vec![
-            user_text_step("a"),
-            user_text_step("b"),
-            user_text_step("c"),
-            user_text_step("d"),
-        ];
+        let steps = sample_steps();
         let mut app = App::new(steps);
         app.execute_command("3");
         assert_eq!(app.list_state.selected(), Some(2));
@@ -514,7 +622,7 @@ mod tests {
 
     #[test]
     fn execute_command_ignores_empty_input() {
-        let steps = vec![user_text_step("a"), user_text_step("b")];
+        let steps = sample_steps();
         let mut app = App::new(steps);
         app.list_state.select(Some(0));
         app.execute_command("   ");
@@ -524,9 +632,87 @@ mod tests {
 
     #[test]
     fn execute_command_reports_unknown() {
-        let steps = vec![user_text_step("a")];
+        let steps = sample_steps();
         let mut app = App::new(steps);
         app.execute_command("nope");
         assert!(app.status_msg.as_ref().unwrap().contains("unknown"));
+    }
+
+    #[test]
+    fn apply_filter_by_tool_name_substring_case_insensitive() {
+        let steps = sample_steps();
+        let mut app = App::new(steps);
+        app.apply_filter("read");
+        // Matches step 2 (tool_use Read) and step 3 (tool_result Read)
+        assert_eq!(app.visible_count(), 2);
+        assert_eq!(app.filter.as_deref(), Some("read"));
+        assert_eq!(app.list_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn apply_filter_by_kind_prefix() {
+        let steps = sample_steps();
+        let mut app = App::new(steps);
+        app.apply_filter("[tool]");
+        // Matches both [tool] steps
+        assert_eq!(app.visible_count(), 2);
+    }
+
+    #[test]
+    fn apply_filter_empty_clears_existing_filter() {
+        let steps = sample_steps();
+        let mut app = App::new(steps);
+        app.apply_filter("Read");
+        assert_eq!(app.visible_count(), 2);
+        app.apply_filter("");
+        assert_eq!(app.visible_count(), 6);
+        assert!(app.filter.is_none());
+    }
+
+    #[test]
+    fn apply_filter_no_matches_keeps_previous_view_and_sets_error() {
+        let steps = sample_steps();
+        let mut app = App::new(steps);
+        app.apply_filter("nonexistent");
+        assert_eq!(app.visible_count(), 6); // unchanged
+        assert!(app.filter.is_none()); // filter not installed
+        assert!(app.status_msg.as_ref().unwrap().contains("no matches"));
+    }
+
+    #[test]
+    fn clear_filter_restores_full_view() {
+        let steps = sample_steps();
+        let mut app = App::new(steps);
+        app.apply_filter("Read");
+        app.clear_filter();
+        assert_eq!(app.visible_count(), 6);
+        assert!(app.filter.is_none());
+        assert_eq!(app.list_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn navigation_under_filter_operates_on_filtered_view() {
+        let steps = sample_steps();
+        let mut app = App::new(steps);
+        app.apply_filter("[tool]");
+        assert_eq!(app.visible_count(), 2);
+        assert_eq!(app.list_state.selected(), Some(0));
+        app.next();
+        assert_eq!(app.list_state.selected(), Some(1));
+        app.next(); // clamps to last
+        assert_eq!(app.list_state.selected(), Some(1));
+        app.home();
+        assert_eq!(app.list_state.selected(), Some(0));
+        app.end();
+        assert_eq!(app.list_state.selected(), Some(1));
+    }
+
+    #[test]
+    fn goto_step_under_filter_uses_visible_positions() {
+        let steps = sample_steps();
+        let mut app = App::new(steps);
+        app.apply_filter("[tool]");
+        app.goto_step(2); // 2nd visible row
+        assert_eq!(app.list_state.selected(), Some(1));
     }
 }
