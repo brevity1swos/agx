@@ -103,43 +103,6 @@ pub fn load(path: &Path) -> Result<Vec<Entry>> {
     Ok(entries)
 }
 
-#[derive(Debug, Default)]
-pub struct EntryCounts {
-    pub user: usize,
-    pub assistant: usize,
-    pub other: usize,
-    pub tool_uses: usize,
-    pub tool_results: usize,
-}
-
-pub fn count(entries: &[Entry]) -> EntryCounts {
-    let mut counts = EntryCounts::default();
-    for entry in entries {
-        match entry {
-            Entry::User(u) => {
-                counts.user += 1;
-                if let UserContent::Items(items) = &u.message.content {
-                    for item in items {
-                        if matches!(item, UserContentItem::ToolResult { .. }) {
-                            counts.tool_results += 1;
-                        }
-                    }
-                }
-            }
-            Entry::Assistant(a) => {
-                counts.assistant += 1;
-                for item in &a.message.content {
-                    if matches!(item, AssistantContentItem::ToolUse { .. }) {
-                        counts.tool_uses += 1;
-                    }
-                }
-            }
-            Entry::Other => counts.other += 1,
-        }
-    }
-    counts
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,40 +162,5 @@ mod tests {
         };
         assert_eq!(a.message.content.len(), 1);
         assert!(matches!(&a.message.content[0], AssistantContentItem::Other));
-    }
-
-    #[test]
-    fn counts_summarize_correctly() {
-        let entries = vec![
-            Entry::Other,
-            Entry::User(UserEntry {
-                uuid: "u1".into(),
-                parent_uuid: None,
-                timestamp: None,
-                message: UserMessage {
-                    role: "user".into(),
-                    content: UserContent::Text("hi".into()),
-                },
-            }),
-            Entry::Assistant(AssistantEntry {
-                uuid: "a1".into(),
-                parent_uuid: Some("u1".into()),
-                timestamp: None,
-                message: AssistantMessage {
-                    role: "assistant".into(),
-                    content: vec![AssistantContentItem::ToolUse {
-                        id: "t1".into(),
-                        name: "Read".into(),
-                        input: serde_json::Value::Null,
-                    }],
-                },
-            }),
-        ];
-        let c = count(&entries);
-        assert_eq!(c.user, 1);
-        assert_eq!(c.assistant, 1);
-        assert_eq!(c.other, 1);
-        assert_eq!(c.tool_uses, 1);
-        assert_eq!(c.tool_results, 0);
     }
 }

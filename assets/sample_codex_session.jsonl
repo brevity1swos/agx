@@ -1,0 +1,14 @@
+{"timestamp":"2024-01-01T00:00:00Z","type":"session_meta","payload":{"id":"synthetic-codex-session-0000","timestamp":"2024-01-01T00:00:00Z","cwd":"/tmp/synthetic","originator":"codex-tui","cli_version":"0.118.0"}}
+{"timestamp":"2024-01-01T00:00:00Z","type":"event_msg","payload":{"type":"task_started"}}
+{"timestamp":"2024-01-01T00:00:00Z","type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"<permissions instructions>\nSandbox mode: workspace-write."}]}}
+{"timestamp":"2024-01-01T00:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Write a Python function that returns the first n Fibonacci numbers."}]}}
+{"timestamp":"2024-01-01T00:00:02Z","type":"response_item","payload":{"type":"reasoning","summary":[],"content":null}}
+{"timestamp":"2024-01-01T00:00:03Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"I'll create fib.py with an iterative implementation."}]}}
+{"timestamp":"2024-01-01T00:00:04Z","type":"response_item","payload":{"type":"function_call","call_id":"call_synthetic_001","name":"apply_patch","arguments":"{\"input\":\"*** Begin Patch\\n*** Add File: fib.py\\n+def fib(n):\\n+    a, b = 0, 1\\n+    result = []\\n+    for _ in range(n):\\n+        result.append(a)\\n+        a, b = b, a + b\\n+    return result\\n*** End Patch\"}"}}
+{"timestamp":"2024-01-01T00:00:05Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_synthetic_001","output":"Patch applied successfully.\n"}}
+{"timestamp":"2024-01-01T00:00:06Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Let me verify it runs."}]}}
+{"timestamp":"2024-01-01T00:00:07Z","type":"response_item","payload":{"type":"function_call","call_id":"call_synthetic_002","name":"exec_command","arguments":"{\"cmd\":\"python3 -c 'from fib import fib; print(fib(10))'\"}"}}
+{"timestamp":"2024-01-01T00:00:08Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_synthetic_002","output":"[0, 1, 1, 2, 3, 5, 8, 13, 21, 34]\n"}}
+{"timestamp":"2024-01-01T00:00:09Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done. fib(10) returns [0, 1, 1, 2, 3, 5, 8, 13, 21, 34] as expected."}]}}
+{"timestamp":"2024-01-01T00:00:10Z","type":"event_msg","payload":{"type":"task_complete"}}
+{"timestamp":"2024-01-01T00:00:10Z","type":"turn_context","payload":{}}

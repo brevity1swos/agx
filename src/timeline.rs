@@ -3,8 +3,8 @@ use crate::session::{
 };
 use std::collections::HashMap;
 
-const LABEL_PREVIEW_WIDTH: usize = 60;
-const RESULT_PREVIEW_WIDTH: usize = 50;
+pub(crate) const LABEL_PREVIEW_WIDTH: usize = 60;
+pub(crate) const RESULT_PREVIEW_WIDTH: usize = 50;
 
 #[derive(Debug, Clone)]
 pub struct Step {
@@ -19,6 +19,27 @@ pub enum StepKind {
     ToolResult,
     AssistantText,
     ToolUse,
+}
+
+#[derive(Debug, Default)]
+pub struct StepCounts {
+    pub user: usize,
+    pub assistant: usize,
+    pub tool_uses: usize,
+    pub tool_results: usize,
+}
+
+pub fn count_from_steps(steps: &[Step]) -> StepCounts {
+    let mut c = StepCounts::default();
+    for step in steps {
+        match step.kind {
+            StepKind::UserText => c.user += 1,
+            StepKind::AssistantText => c.assistant += 1,
+            StepKind::ToolUse => c.tool_uses += 1,
+            StepKind::ToolResult => c.tool_results += 1,
+        }
+    }
+    c
 }
 
 #[derive(Debug, Clone)]
@@ -41,7 +62,19 @@ pub fn build(entries: &[Entry]) -> Vec<Step> {
                             UserContentItem::ToolResult {
                                 tool_use_id,
                                 content,
-                            } => steps.push(tool_result_step(tool_use_id, content, &tool_meta)),
+                            } => {
+                                let result_text = match content {
+                                    ToolResultContent::Text(s) => s.clone(),
+                                    ToolResultContent::Items(v) => pretty_json(v),
+                                };
+                                let meta = tool_meta.get(tool_use_id);
+                                steps.push(tool_result_step(
+                                    tool_use_id,
+                                    &result_text,
+                                    meta.map(|m| m.name.as_str()),
+                                    meta.map(|m| m.input_pretty.as_str()),
+                                ));
+                            }
                             UserContentItem::Other => {}
                         }
                     }
@@ -54,7 +87,8 @@ pub fn build(entries: &[Entry]) -> Vec<Step> {
                             steps.push(assistant_text_step(text));
                         }
                         AssistantContentItem::ToolUse { id, name, input } => {
-                            steps.push(tool_use_step(id, name, input));
+                            let input_pretty = pretty_json(input);
+                            steps.push(tool_use_step(id, name, &input_pretty));
                         }
                         AssistantContentItem::Other => {}
                     }
@@ -66,7 +100,7 @@ pub fn build(entries: &[Entry]) -> Vec<Step> {
     steps
 }
 
-fn user_text_step(text: &str) -> Step {
+pub(crate) fn user_text_step(text: &str) -> Step {
     Step {
         label: format!("[user]   {}", truncate(text, LABEL_PREVIEW_WIDTH)),
         detail: text.to_string(),
@@ -74,7 +108,7 @@ fn user_text_step(text: &str) -> Step {
     }
 }
 
-fn assistant_text_step(text: &str) -> Step {
+pub(crate) fn assistant_text_step(text: &str) -> Step {
     Step {
         label: format!("[asst]   {}", truncate(text, LABEL_PREVIEW_WIDTH)),
         detail: text.to_string(),
@@ -82,38 +116,31 @@ fn assistant_text_step(text: &str) -> Step {
     }
 }
 
-fn tool_use_step(id: &str, name: &str, input: &serde_json::Value) -> Step {
-    let pretty = pretty_json(input);
+pub(crate) fn tool_use_step(id: &str, name: &str, input_pretty: &str) -> Step {
     Step {
         label: format!("[tool]   {} ({})", name, short_id(id)),
-        detail: format!("Tool: {name}\nID: {id}\n\nInput:\n{pretty}"),
+        detail: format!("Tool: {name}\nID: {id}\n\nInput:\n{input_pretty}"),
         kind: StepKind::ToolUse,
     }
 }
 
-fn tool_result_step(
-    tool_use_id: &str,
-    content: &ToolResultContent,
-    tool_meta: &HashMap<String, ToolMeta>,
+pub(crate) fn tool_result_step(
+    id: &str,
+    result: &str,
+    tool_name: Option<&str>,
+    input_pretty: Option<&str>,
 ) -> Step {
-    let result_text = match content {
-        ToolResultContent::Text(s) => s.clone(),
-        ToolResultContent::Items(v) => pretty_json(v),
-    };
-    let meta = tool_meta.get(tool_use_id);
-    let display_name = meta.map_or("(unknown)", |m| m.name.as_str());
-    let input_section = meta
-        .map(|m| format!("Input:\n{}\n\n", m.input_pretty))
+    let display_name = tool_name.unwrap_or("(unknown)");
+    let input_section = input_pretty
+        .map(|p| format!("Input:\n{p}\n\n"))
         .unwrap_or_default();
     Step {
         label: format!(
             "[result] {} → {}",
             display_name,
-            truncate(&result_text, RESULT_PREVIEW_WIDTH)
+            truncate(result, RESULT_PREVIEW_WIDTH)
         ),
-        detail: format!(
-            "Tool: {display_name}\nID: {tool_use_id}\n\n{input_section}Result:\n{result_text}"
-        ),
+        detail: format!("Tool: {display_name}\nID: {id}\n\n{input_section}Result:\n{result}"),
         kind: StepKind::ToolResult,
     }
 }
@@ -138,11 +165,11 @@ fn collect_tool_meta(entries: &[Entry]) -> HashMap<String, ToolMeta> {
     map
 }
 
-fn pretty_json<T: serde::Serialize>(value: &T) -> String {
+pub(crate) fn pretty_json<T: serde::Serialize>(value: &T) -> String {
     serde_json::to_string_pretty(value).unwrap_or_default()
 }
 
-fn truncate(s: &str, n: usize) -> String {
+pub(crate) fn truncate(s: &str, n: usize) -> String {
     let mut head = String::with_capacity(n);
     let mut iter = s.chars().map(|c| if c == '\n' { ' ' } else { c });
     for _ in 0..n {
@@ -157,7 +184,7 @@ fn truncate(s: &str, n: usize) -> String {
     head
 }
 
-fn short_id(id: &str) -> String {
+pub(crate) fn short_id(id: &str) -> String {
     if id.len() <= 12 {
         id.to_string()
     } else {
@@ -274,6 +301,22 @@ mod tests {
         assert!(steps[0].detail.contains("Tool: (unknown)"));
         assert!(!steps[0].detail.contains("Input:"));
         assert!(steps[0].detail.contains("Result:"));
+    }
+
+    #[test]
+    fn count_from_steps_works() {
+        let steps = vec![
+            user_text_step("hi"),
+            assistant_text_step("hello"),
+            tool_use_step("id1", "Read", "{}"),
+            tool_result_step("id1", "output", Some("Read"), Some("{}")),
+            tool_use_step("id2", "Bash", "{}"),
+        ];
+        let c = count_from_steps(&steps);
+        assert_eq!(c.user, 1);
+        assert_eq!(c.assistant, 1);
+        assert_eq!(c.tool_uses, 2);
+        assert_eq!(c.tool_results, 1);
     }
 
     #[test]

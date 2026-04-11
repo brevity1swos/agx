@@ -23,15 +23,17 @@ Selecting a `[result]` step reveals **both the original tool call input and the 
 
 ## Format support
 
-agx v0.1.0 supports **Claude Code session JSONL only**. Other agent CLI formats use fundamentally different schemas and are not yet parseable. Adding them is a planned v0.2.0+ expansion — each format needs its own parser that maps format-specific entries into the shared timeline model.
+agx auto-detects the session format by inspecting the first line (JSONL) or the wrapper shape (single JSON object). All three major agent CLIs are supported out of the box:
 
-| Agent CLI | Session location | v0.1.0 support |
+| Agent CLI | Session location | Support |
 |---|---|---|
 | Claude Code | `~/.claude/projects/<encoded-path>/<uuid>.jsonl` | ✅ Full |
-| Codex CLI (OpenAI) | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | ❌ Planned. Different schema — wraps entries in `{timestamp, type, payload}` with its own type taxonomy (`session_meta`, `response_item`, `event_msg`, `turn_context`) and uses `role: developer`. Parses without crash but produces zero timeline steps. |
-| Gemini CLI (Google) | `~/.gemini/tmp/<project>/chats/session-*.json` | ❌ Planned. Single JSON object wrapper — not JSONL. Needs a separate parser path. Current parser hard-errors on load. |
+| Codex CLI (OpenAI) | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | ✅ Full |
+| Gemini CLI (Google) | `~/.gemini/tmp/<project>/chats/session-*.json` | ✅ Full |
 
-If you want to track progress toward multi-format support or contribute a parser for your format, open an issue.
+Each format has its own parser module (`src/session.rs`, `src/codex.rs`, `src/gemini.rs`) that converts format-specific entries into the shared `timeline::Step` model. Tool calls are paired with their results regardless of how the underlying format represents the relationship — Claude Code uses `tool_use_id`, Codex uses `call_id`, and Gemini packs the call and result into a single atomic `toolCall` object that agx splits for timeline navigation.
+
+To add a new format, see CLAUDE.md's "Support a new agent trace format" common task.
 
 ## Try it
 
@@ -39,23 +41,36 @@ If you want to track progress toward multi-format support or contribute a parser
 git clone https://github.com/brevity1swos/agx.git
 cd agx
 cargo build --release
-./target/release/agx assets/sample_session.jsonl
+
+# Pick one — all three work, format auto-detected
+./target/release/agx assets/sample_session.jsonl          # Claude Code format
+./target/release/agx assets/sample_codex_session.jsonl    # Codex CLI format
+./target/release/agx assets/sample_gemini_session.json    # Gemini CLI format
 ```
 
-`assets/sample_session.jsonl` is a synthetic 9-entry session that exercises every entry type agx renders. Requires Rust 1.74+ (edition 2024).
+Each fixture is a synthetic Fibonacci-writing conversation in its native schema — zero personal data, exercises every entry type the parser handles. Requires Rust 1.74+ (edition 2024).
 
 ## Use on your own sessions
 
-Claude Code stores sessions at `~/.claude/projects/<encoded-project-path>/<session-uuid>.jsonl`. Find recent ones:
+Each CLI stores its sessions in a predictable location. Find recent ones with:
 
 ```bash
-ls -lt ~/.claude/projects/*/*.jsonl 2>/dev/null | head -10
+# Claude Code
+ls -lt ~/.claude/projects/*/*.jsonl 2>/dev/null | head -5
+
+# Codex CLI
+ls -lt ~/.codex/sessions/*/*/*/rollout-*.jsonl 2>/dev/null | head -5
+
+# Gemini CLI
+ls -lt ~/.gemini/tmp/*/chats/session-*.json 2>/dev/null | head -5
 ```
 
-Then launch:
+Then launch agx on any of them — no flag needed, format is auto-detected:
 
 ```bash
 ./target/release/agx ~/.claude/projects/<project>/<session>.jsonl
+./target/release/agx ~/.codex/sessions/<yyyy>/<mm>/<dd>/rollout-<ts>.jsonl
+./target/release/agx ~/.gemini/tmp/<project>/chats/session-<ts>.json
 ```
 
 For non-interactive use (scripts, CI, piping), use `--summary` mode:
@@ -108,7 +123,7 @@ Built 11 timeline steps. First 20:
 - Branching / backtrack visualization (like rgx's PCRE2 debugger)
 - Heatmap mode showing hot tool-call regions
 - Time-travel scrubbing with a progress bar
-- Multi-format support (Codex CLI, Gemini CLI, Anthropic Agent SDK, Vercel AI SDK, LangChain, OpenAI Assistants) — see Format support table above
+- Anthropic Agent SDK, Vercel AI SDK, LangChain, OpenAI Assistants and other non-CLI formats (Claude Code, Codex CLI, Gemini CLI are already supported — see Format support table above)
 - Live attach mode (watch an in-progress session)
 - Filter / search / jump-to-tool
 - Cost and latency annotations
@@ -125,13 +140,18 @@ agx is the rgx-style answer: deeply engineered, narrow scope, terminal-native. M
 
 ```
 src/
-├── main.rs       # CLI entry point (clap) + glue
-├── session.rs    # JSONL parser (serde Deserialize, graceful unknown handling)
-├── timeline.rs   # Entry → step expansion + tool_use ↔ tool_result pairing
+├── main.rs       # CLI entry point (clap) + format dispatch
+├── format.rs     # Format detection (Claude Code / Codex / Gemini)
+├── session.rs    # Claude Code JSONL parser (serde Deserialize)
+├── codex.rs      # Codex CLI JSONL parser (response_item + function_call pairing)
+├── gemini.rs     # Gemini CLI single-JSON parser (toolCall splitting)
+├── timeline.rs   # Shared Step / StepKind + step helpers used by all parsers
 └── tui.rs        # ratatui TUI + event loop + panic-safe terminal guard
 ```
 
-~900 LOC. 6 direct dependencies: `ratatui`, `crossterm`, `serde`, `serde_json`, `anyhow`, `clap`.
+Each parser produces `Vec<Step>` directly; `timeline::build()` is the Claude Code adapter that converts the format's native `Entry` enum into Steps. All formats share the same step-helper functions (`user_text_step`, `assistant_text_step`, `tool_use_step`, `tool_result_step`) so the TUI renders every format identically.
+
+6 direct dependencies: `ratatui`, `crossterm`, `serde`, `serde_json`, `anyhow`, `clap`.
 
 ## Credits
 

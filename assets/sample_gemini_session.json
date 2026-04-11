@@ -1,0 +1,84 @@
+{
+  "sessionId": "00000000-0000-4000-8000-000000000000",
+  "projectHash": "synthetic0000000000000000000000000000000000000000000000000000000",
+  "startTime": "2024-01-01T00:00:00.000Z",
+  "lastUpdated": "2024-01-01T00:00:10.000Z",
+  "messages": [
+    {
+      "type": "user",
+      "id": "msg_synthetic_001",
+      "timestamp": "2024-01-01T00:00:00.000Z",
+      "content": [
+        {"text": "Write a Python function that returns the first n Fibonacci numbers."}
+      ]
+    },
+    {
+      "type": "gemini",
+      "id": "msg_synthetic_002",
+      "timestamp": "2024-01-01T00:00:01.000Z",
+      "model": "synthetic-model",
+      "content": "I'll create fib.py with an iterative implementation.",
+      "toolCalls": [
+        {
+          "id": "write_file_synthetic_001",
+          "name": "write_file",
+          "args": {
+            "file_path": "fib.py",
+            "content": "def fib(n):\n    a, b = 0, 1\n    result = []\n    for _ in range(n):\n        result.append(a)\n        a, b = b, a + b\n    return result\n"
+          },
+          "result": [
+            {
+              "functionResponse": {
+                "id": "write_file_synthetic_001",
+                "name": "write_file",
+                "response": {
+                  "output": "File fib.py written successfully."
+                }
+              }
+            }
+          ],
+          "status": "success",
+          "timestamp": "2024-01-01T00:00:02.000Z"
+        }
+      ]
+    },
+    {
+      "type": "gemini",
+      "id": "msg_synthetic_003",
+      "timestamp": "2024-01-01T00:00:03.000Z",
+      "model": "synthetic-model",
+      "content": "Let me verify it runs correctly.",
+      "toolCalls": [
+        {
+          "id": "shell_synthetic_001",
+          "name": "shell",
+          "args": {
+            "command": "python3 -c 'from fib import fib; print(fib(10))'"
+          },
+          "result": [
+            {
+              "functionResponse": {
+                "id": "shell_synthetic_001",
+                "name": "shell",
+                "response": {
+                  "output": "[0, 1, 1, 2, 3, 5, 8, 13, 21, 34]\n"
+                }
+              }
+            }
+          ],
+          "status": "success",
+          "timestamp": "2024-01-01T00:00:04.000Z"
+        }
+      ]
+    },
+    {
+      "type": "gemini",
+      "id": "msg_synthetic_004",
+      "timestamp": "2024-01-01T00:00:05.000Z",
+      "model": "synthetic-model",
+      "content": "Done. fib(10) returns [0, 1, 1, 2, 3, 5, 8, 13, 21, 34] as expected. The function handles the common case correctly.",
+      "toolCalls": []
+    }
+  ],
+  "kind": "main"
+}
