@@ -19,12 +19,27 @@ Today, when an AI agent does something unexpected, the debugging options are hos
 
 agx is the rgx-style answer: deeply engineered, narrow scope, terminal-native, multi-format eventually but starting with Claude Code's session JSONL.
 
-## Build
+## Build & try
 
 ```bash
 cargo build --release
-./target/release/agx <path-to-session.jsonl>
+./target/release/agx assets/sample_session.jsonl
 ```
+
+`assets/sample_session.jsonl` is a small synthetic session that exercises every entry type agx renders — user text, assistant text, tool_use, and tool_result. Replace with a path to your own Claude Code session JSONL (typically under `~/.claude/projects/`) to step through real traces.
+
+### Keys
+
+| Key | Action |
+|---|---|
+| `↓` / `j` | next step |
+| `↑` / `k` | prev step |
+| `PgDn` / `d` | jump 10 steps forward |
+| `PgUp` / `u` | jump 10 steps back |
+| `Home` / `g` | first step |
+| `End` / `G` | last step |
+| `?` / `F1` | toggle help overlay |
+| `q` / `Esc` | quit |
 
 ## License
 
