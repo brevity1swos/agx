@@ -2,7 +2,9 @@
 
 *Just another gdb, but for your agent.*
 
-A step-through debugger for AI agent execution traces. Terminal-native TUI that turns Claude Code session JSONL files into a navigable timeline of user turns, assistant turns, tool calls, and tool results — with the original call input and the response visible on a single screen.
+Step through and debug AI agent traces without leaving your terminal. Written in Rust.
+
+A terminal-native TUI that turns AI agent session files into a navigable timeline of user turns, assistant turns, tool calls, and tool results — with the original call input and the response visible on a single screen.
 
 Inspired by [rgx](https://github.com/brevity1swos/rgx) — same dual-cursor / heatmap / time-travel approach that rgx applies to regex matching, applied here to agent execution.
 
@@ -18,6 +20,18 @@ Each session becomes a timeline of color-coded steps:
 | `[result]` | magenta | Tool output returned to the assistant |
 
 Selecting a `[result]` step reveals **both the original tool call input and the response in one detail view** — you see what the agent asked for and what came back without scrolling back through the conversation. That's the differentiator.
+
+## Format support
+
+agx v0.1.0 supports **Claude Code session JSONL only**. Other agent CLI formats use fundamentally different schemas and are not yet parseable. Adding them is a planned v0.2.0+ expansion — each format needs its own parser that maps format-specific entries into the shared timeline model.
+
+| Agent CLI | Session location | v0.1.0 support |
+|---|---|---|
+| Claude Code | `~/.claude/projects/<encoded-path>/<uuid>.jsonl` | ✅ Full |
+| Codex CLI (OpenAI) | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | ❌ Planned. Different schema — wraps entries in `{timestamp, type, payload}` with its own type taxonomy (`session_meta`, `response_item`, `event_msg`, `turn_context`) and uses `role: developer`. Parses without crash but produces zero timeline steps. |
+| Gemini CLI (Google) | `~/.gemini/tmp/<project>/chats/session-*.json` | ❌ Planned. Single JSON object wrapper — not JSONL. Needs a separate parser path. Current parser hard-errors on load. |
+
+If you want to track progress toward multi-format support or contribute a parser for your format, open an issue.
 
 ## Try it
 
@@ -94,7 +108,7 @@ Built 11 timeline steps. First 20:
 - Branching / backtrack visualization (like rgx's PCRE2 debugger)
 - Heatmap mode showing hot tool-call regions
 - Time-travel scrubbing with a progress bar
-- Multi-format support (Anthropic Agent SDK, Vercel AI SDK, LangChain, OpenAI Assistants, etc.)
+- Multi-format support (Codex CLI, Gemini CLI, Anthropic Agent SDK, Vercel AI SDK, LangChain, OpenAI Assistants) — see Format support table above
 - Live attach mode (watch an in-progress session)
 - Filter / search / jump-to-tool
 - Cost and latency annotations
