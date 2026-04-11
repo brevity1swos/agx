@@ -1,0 +1,12 @@
+/target
+*.swp
+*.swo
+.DS_Store
+.env.local
+
+# Internal session handoff — not for public repo
+HANDOFF.md
+
+# Local Claude Code / OMC tool state
+.omc/
+.claude/
