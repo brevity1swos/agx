@@ -24,7 +24,7 @@ Make agx powerful enough before the public release that cloning it is unambiguou
 | 3 | Jump to step (`:42`) | ✅ done | Commit `6b38d9f`. Command mode via `:`, number jump. |
 | 8 | Backtrack / error marker detection | ✅ done | Heuristic detection of tool errors in result content — red + bold in timeline. Retry pattern detection deferred to post-release. |
 | 9 | Dual-cursor conversation panel | ✅ done | Three-pane layout (timeline 25% / conversation 40% / detail 35%), Tab toggles 2-pane fallback. Conversation pane shows text-only flow, cursor syncs to nearest preceding text step. |
-| 10 | Branch / fork visualization | planned | Indent and tree display for parallel tool calls. Depends on feature 9. |
+| 10 | Branch / fork visualization | ✅ done | Runs of 2+ consecutive tool_use or tool_result steps are detected as batched parallel calls and marked with a dark-gray `║ ` prefix in the timeline. |
 
 ### Phase 2 — Workflow muscle (usability for long sessions)
 
@@ -37,7 +37,7 @@ Make agx powerful enough before the public release that cloning it is unambiguou
 | 11 | Vim mode (`--vim`) | planned | Normal/Insert, hjkl/w/b/e, `:` commands, `/` search |
 | 12 | Multi-session browser | planned | No args → interactive picker across Claude / Codex / Gemini recent sessions |
 
-**Progress: 9/12 features done** (~5 days of work). Remaining: 3 features, ~3.5 days.
+**Progress: 10/12 features done** (~5.5 days of work). Remaining: 2 features, ~2 days. Phase 1 debugger depth complete.
 
 ## Build order (dependency-sorted)
 

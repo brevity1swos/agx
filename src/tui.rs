@@ -38,6 +38,7 @@ pub struct App {
     steps: Vec<Step>,
     list_state: ListState,
     bg_flags: Vec<bool>,
+    batch_flags: Vec<bool>,
     filtered_view: Vec<usize>,
     filter: Option<String>,
     search: Option<String>,
@@ -60,6 +61,7 @@ impl App {
             list_state.select(Some(0));
         }
         let bg_flags = compute_bg_flags(&steps);
+        let batch_flags = compute_batch_flags(&steps);
         let filtered_view: Vec<usize> = (0..steps.len()).collect();
         let conversation_indices = compute_conversation_indices(&steps);
         let mut conversation_list_state = ListState::default();
@@ -70,6 +72,7 @@ impl App {
             steps,
             list_state,
             bg_flags,
+            batch_flags,
             filtered_view,
             filter: None,
             search: None,
@@ -373,6 +376,32 @@ impl App {
     }
 }
 
+// Detect runs of 2+ consecutive tool_use or tool_result steps. These are
+// batched parallel tool calls (Claude Code parallel Agent dispatches,
+// Codex batched function_calls). Returns a flag per original step index.
+fn compute_batch_flags(steps: &[Step]) -> Vec<bool> {
+    let mut flags = vec![false; steps.len()];
+    let mut i = 0;
+    while i < steps.len() {
+        let kind = steps[i].kind;
+        if matches!(kind, StepKind::ToolUse | StepKind::ToolResult) {
+            let mut j = i;
+            while j < steps.len() && steps[j].kind == kind {
+                j += 1;
+            }
+            if j - i >= 2 {
+                for item in flags.iter_mut().take(j).skip(i) {
+                    *item = true;
+                }
+            }
+            i = j;
+        } else {
+            i += 1;
+        }
+    }
+    flags
+}
+
 // Collect original step indices of user/assistant text steps, in order.
 // These form the "conversation view" — the flowing read-only pane that
 // complements the step-by-step timeline.
@@ -502,6 +531,7 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 .filter_map(|(view_idx, &orig_idx)| {
                     let s = app.steps.get(orig_idx)?;
                     let is_error = is_error_result(s);
+                    let is_batched = app.batch_flags.get(orig_idx).copied().unwrap_or(false);
                     let color = if is_error {
                         Color::Red
                     } else {
@@ -517,10 +547,11 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                     } else if app.bg_flags.get(orig_idx).copied().unwrap_or(false) {
                         style = style.bg(ALT_BG);
                     }
-                    Some(ListItem::new(Line::from(vec![Span::styled(
-                        s.label.as_str(),
-                        style,
-                    )])))
+                    let batch_marker = if is_batched { "║ " } else { "  " };
+                    Some(ListItem::new(Line::from(vec![
+                        Span::styled(batch_marker, Style::default().fg(Color::DarkGray)),
+                        Span::styled(s.label.as_str(), style),
+                    ])))
                 })
                 .collect();
 
@@ -798,6 +829,11 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                         ),
                         Span::raw("error (failed tool call, heuristic)"),
+                    ]),
+                    Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled("║      ", Style::default().fg(Color::DarkGray)),
+                        Span::raw("part of a batched parallel tool call"),
                     ]),
                     Line::from(""),
                     Line::from(Span::styled(
@@ -1370,5 +1406,69 @@ mod tests {
         assert!(!app.three_pane);
         app.toggle_layout();
         assert!(app.three_pane);
+    }
+
+    #[test]
+    fn batch_flags_mark_consecutive_tool_uses() {
+        // Three tool_uses in a row followed by three tool_results — a parallel batch.
+        let steps = vec![
+            user_text_step("dispatch parallel"),
+            tool_use_step("t1", "Agent", "{}"),
+            tool_use_step("t2", "Agent", "{}"),
+            tool_use_step("t3", "Agent", "{}"),
+            tool_result_step("t1", "done", Some("Agent"), Some("{}")),
+            tool_result_step("t2", "done", Some("Agent"), Some("{}")),
+            tool_result_step("t3", "done", Some("Agent"), Some("{}")),
+            assistant_text_step("synthesis"),
+        ];
+        let flags = compute_batch_flags(&steps);
+        assert!(!flags[0]); // user text
+        assert!(flags[1]); // tool_use 1 (batched)
+        assert!(flags[2]); // tool_use 2 (batched)
+        assert!(flags[3]); // tool_use 3 (batched)
+        assert!(flags[4]); // tool_result 1 (batched)
+        assert!(flags[5]); // tool_result 2 (batched)
+        assert!(flags[6]); // tool_result 3 (batched)
+        assert!(!flags[7]); // assistant text
+    }
+
+    #[test]
+    fn batch_flags_ignore_single_tool_calls() {
+        // Alternating tool_use / tool_result pattern = no batch.
+        let steps = vec![
+            tool_use_step("t1", "Read", "{}"),
+            tool_result_step("t1", "ok", Some("Read"), Some("{}")),
+            tool_use_step("t2", "Bash", "{}"),
+            tool_result_step("t2", "ok", Some("Bash"), Some("{}")),
+        ];
+        let flags = compute_batch_flags(&steps);
+        assert!(!flags[0]);
+        assert!(!flags[1]);
+        assert!(!flags[2]);
+        assert!(!flags[3]);
+    }
+
+    #[test]
+    fn batch_flags_separate_runs_correctly() {
+        // First run of 2 tool_uses, then text break, then another run of 2.
+        let steps = vec![
+            tool_use_step("t1", "Read", "{}"),
+            tool_use_step("t2", "Read", "{}"),
+            assistant_text_step("..."),
+            tool_use_step("t3", "Bash", "{}"),
+            tool_use_step("t4", "Bash", "{}"),
+        ];
+        let flags = compute_batch_flags(&steps);
+        assert!(flags[0]);
+        assert!(flags[1]);
+        assert!(!flags[2]);
+        assert!(flags[3]);
+        assert!(flags[4]);
+    }
+
+    #[test]
+    fn batch_flags_empty_for_no_steps() {
+        let flags = compute_batch_flags(&[]);
+        assert!(flags.is_empty());
     }
 }
