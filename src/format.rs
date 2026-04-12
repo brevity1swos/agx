@@ -7,6 +7,7 @@ pub enum Format {
     ClaudeCode,
     Codex,
     Gemini,
+    Generic,
 }
 
 impl fmt::Display for Format {
@@ -15,6 +16,7 @@ impl fmt::Display for Format {
             Format::ClaudeCode => "Claude Code",
             Format::Codex => "Codex CLI",
             Format::Gemini => "Gemini CLI",
+            Format::Generic => "Generic conversation",
         };
         f.write_str(s)
     }
@@ -24,13 +26,16 @@ pub fn detect(path: &Path) -> Result<Format> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("reading session file: {}", path.display()))?;
 
-    // Gemini: single JSON object wrapper with sessionId + messages
+    // Single JSON object: could be Gemini (sessionId + messages) or Generic (messages with role)
     if content.trim_start().starts_with('{')
         && let Ok(v) = serde_json::from_str::<serde_json::Value>(&content)
-        && v.get("sessionId").is_some()
-        && v.get("messages").is_some()
     {
-        return Ok(Format::Gemini);
+        if v.get("sessionId").is_some() && v.get("messages").is_some() {
+            return Ok(Format::Gemini);
+        }
+        if v.get("messages").is_some() {
+            return Ok(Format::Generic);
+        }
     }
 
     // JSONL: inspect the first non-empty line's `type` field

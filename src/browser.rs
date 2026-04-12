@@ -201,6 +201,7 @@ pub fn prompt_user_to_choose(files: &[SessionFile]) -> Result<Option<PathBuf>> {
             Format::ClaudeCode => "[Claude]",
             Format::Codex => "[Codex ]",
             Format::Gemini => "[Gemini]",
+            Format::Generic => "[Generic]",
         };
         let when = format_relative_time(f.modified_secs);
         let display_path = short_path(&f.path);

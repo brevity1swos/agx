@@ -2,6 +2,7 @@ mod browser;
 mod codex;
 mod format;
 mod gemini;
+mod generic;
 mod session;
 mod timeline;
 mod tui;
@@ -46,6 +47,7 @@ fn load_session(path: &Path) -> Result<Vec<Step>> {
         }
         Format::Codex => codex::load(path)?,
         Format::Gemini => gemini::load(path)?,
+        Format::Generic => generic::load(path)?,
     };
     Ok(steps)
 }
