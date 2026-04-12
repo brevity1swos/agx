@@ -35,15 +35,6 @@ pub struct StepCounts {
 // Codex, and Gemini error outputs. Conservative — prefers false negatives
 // over false positives so users can trust the red marker.
 pub fn is_error_result(step: &Step) -> bool {
-    if step.kind != StepKind::ToolResult {
-        return false;
-    }
-    let haystack = step
-        .detail
-        .split("\nResult:\n")
-        .nth(1)
-        .unwrap_or(&step.detail)
-        .to_lowercase();
     const INDICATORS: &[&str] = &[
         "\"error\"",
         "error:",
@@ -67,6 +58,15 @@ pub fn is_error_result(step: &Step) -> bool {
         "process exited with code 1",
         "process exited with code 2",
     ];
+    if step.kind != StepKind::ToolResult {
+        return false;
+    }
+    let haystack = step
+        .detail
+        .split("\nResult:\n")
+        .nth(1)
+        .unwrap_or(&step.detail)
+        .to_lowercase();
     INDICATORS.iter().any(|kw| haystack.contains(kw))
 }
 

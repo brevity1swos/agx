@@ -35,9 +35,9 @@ Make agx powerful enough before the public release that cloning it is unambiguou
 | 6 | Bookmarks | ✅ done | Commit `95addb0`. `m<char>` sets, `'<char>` jumps. Stored by original step index, survives filter cycles, reports hidden-by-filter. |
 | 7 | Mouse support | ✅ done | Click-to-select on timeline rows, scroll-wheel prev/next. |
 | 11 | Vim mode count prefixes | ✅ done | `3j`, `5k`, `2d`, `42G`, etc. — all existing navigation keys accept a numeric count prefix. hjkl/gG/`/` etc. already worked as vim keys; count completes the vim feel. No `--vim` flag needed since there's no Insert/Normal distinction in a read-only debugger. |
-| 12 | Multi-session browser | planned | No args → interactive picker across Claude / Codex / Gemini recent sessions |
+| 12 | Multi-session browser | ✅ done | `agx` with no args scans ~/.claude, ~/.codex, ~/.gemini for recent sessions, shows a numbered list with [Claude]/[Codex]/[Gemini] tags + relative time, prompts for choice. |
 
-**Progress: 11/12 features done** (~6 days of work). Remaining: 1 feature, ~1 day.
+**Progress: 12/12 features done.** v1.0 pre-release scope complete.
 
 ## Build order (dependency-sorted)
 
