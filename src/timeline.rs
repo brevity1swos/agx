@@ -11,6 +11,7 @@ pub struct Step {
     pub label: String,
     pub detail: String,
     pub kind: StepKind,
+    pub tool_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,6 +84,57 @@ pub fn count_from_steps(steps: &[Step]) -> StepCounts {
     c
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct ToolStats {
+    pub name: String,
+    pub use_count: usize,
+    pub result_count: usize,
+    pub error_count: usize,
+}
+
+impl ToolStats {
+    pub fn error_rate(&self) -> Option<f64> {
+        if self.result_count == 0 {
+            None
+        } else {
+            #[allow(clippy::cast_precision_loss)]
+            Some(self.error_count as f64 / self.result_count as f64)
+        }
+    }
+}
+
+/// Aggregate per-tool statistics from a timeline. Returns a vector of
+/// `ToolStats` sorted by `use_count` descending.
+pub fn compute_tool_stats(steps: &[Step]) -> Vec<ToolStats> {
+    let mut map: HashMap<String, ToolStats> = HashMap::new();
+    for step in steps {
+        let Some(name) = &step.tool_name else {
+            continue;
+        };
+        let entry = map.entry(name.clone()).or_insert_with(|| ToolStats {
+            name: name.clone(),
+            ..ToolStats::default()
+        });
+        match step.kind {
+            StepKind::ToolUse => entry.use_count += 1,
+            StepKind::ToolResult => {
+                entry.result_count += 1;
+                if is_error_result(step) {
+                    entry.error_count += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut stats: Vec<ToolStats> = map.into_values().collect();
+    stats.sort_by(|a, b| {
+        b.use_count
+            .cmp(&a.use_count)
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    stats
+}
+
 #[derive(Debug, Clone)]
 struct ToolMeta {
     name: String,
@@ -146,6 +198,7 @@ pub(crate) fn user_text_step(text: &str) -> Step {
         label: format!("[user]   {}", truncate(text, LABEL_PREVIEW_WIDTH)),
         detail: text.to_string(),
         kind: StepKind::UserText,
+        tool_name: None,
     }
 }
 
@@ -154,6 +207,7 @@ pub(crate) fn assistant_text_step(text: &str) -> Step {
         label: format!("[asst]   {}", truncate(text, LABEL_PREVIEW_WIDTH)),
         detail: text.to_string(),
         kind: StepKind::AssistantText,
+        tool_name: None,
     }
 }
 
@@ -162,6 +216,7 @@ pub(crate) fn tool_use_step(id: &str, name: &str, input_pretty: &str) -> Step {
         label: format!("[tool]   {} ({})", name, short_id(id)),
         detail: format!("Tool: {name}\nID: {id}\n\nInput:\n{input_pretty}"),
         kind: StepKind::ToolUse,
+        tool_name: Some(name.to_string()),
     }
 }
 
@@ -183,6 +238,7 @@ pub(crate) fn tool_result_step(
         ),
         detail: format!("Tool: {display_name}\nID: {id}\n\n{input_section}Result:\n{result}"),
         kind: StepKind::ToolResult,
+        tool_name: tool_name.map(str::to_string),
     }
 }
 
@@ -472,5 +528,100 @@ mod tests {
             Some("{\"command\": \"grep error\"}"),
         );
         assert!(!is_error_result(&step));
+    }
+
+    #[test]
+    fn tool_use_step_records_tool_name() {
+        let s = tool_use_step("t1", "Read", "{}");
+        assert_eq!(s.tool_name.as_deref(), Some("Read"));
+    }
+
+    #[test]
+    fn tool_result_step_records_tool_name() {
+        let s = tool_result_step("t1", "ok", Some("Bash"), Some("{}"));
+        assert_eq!(s.tool_name.as_deref(), Some("Bash"));
+    }
+
+    #[test]
+    fn tool_result_step_tool_name_none_for_orphan() {
+        let s = tool_result_step("t1", "ok", None, None);
+        assert_eq!(s.tool_name, None);
+    }
+
+    #[test]
+    fn text_steps_have_no_tool_name() {
+        assert_eq!(user_text_step("hi").tool_name, None);
+        assert_eq!(assistant_text_step("ok").tool_name, None);
+    }
+
+    #[test]
+    fn compute_tool_stats_groups_by_tool_name() {
+        let steps = vec![
+            tool_use_step("t1", "Read", "{}"),
+            tool_result_step("t1", "content", Some("Read"), Some("{}")),
+            tool_use_step("t2", "Read", "{}"),
+            tool_result_step("t2", "content2", Some("Read"), Some("{}")),
+            tool_use_step("t3", "Bash", "{}"),
+            tool_result_step("t3", "output", Some("Bash"), Some("{}")),
+        ];
+        let stats = compute_tool_stats(&steps);
+        assert_eq!(stats.len(), 2);
+        // Read should come first (2 uses vs 1)
+        assert_eq!(stats[0].name, "Read");
+        assert_eq!(stats[0].use_count, 2);
+        assert_eq!(stats[0].result_count, 2);
+        assert_eq!(stats[0].error_count, 0);
+        assert_eq!(stats[1].name, "Bash");
+        assert_eq!(stats[1].use_count, 1);
+    }
+
+    #[test]
+    fn compute_tool_stats_counts_errors() {
+        let steps = vec![
+            tool_use_step("t1", "Bash", "{}"),
+            tool_result_step("t1", "error: command failed", Some("Bash"), Some("{}")),
+            tool_use_step("t2", "Bash", "{}"),
+            tool_result_step("t2", "success", Some("Bash"), Some("{}")),
+        ];
+        let stats = compute_tool_stats(&steps);
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].use_count, 2);
+        assert_eq!(stats[0].error_count, 1);
+        assert_eq!(stats[0].error_rate(), Some(0.5));
+    }
+
+    #[test]
+    fn compute_tool_stats_sorts_by_use_count_descending() {
+        let steps = vec![
+            tool_use_step("t1", "Apple", "{}"),
+            tool_use_step("t2", "Banana", "{}"),
+            tool_use_step("t3", "Banana", "{}"),
+            tool_use_step("t4", "Banana", "{}"),
+            tool_use_step("t5", "Cherry", "{}"),
+            tool_use_step("t6", "Cherry", "{}"),
+        ];
+        let stats = compute_tool_stats(&steps);
+        assert_eq!(stats.len(), 3);
+        assert_eq!(stats[0].name, "Banana"); // 3 uses
+        assert_eq!(stats[1].name, "Cherry"); // 2 uses
+        assert_eq!(stats[2].name, "Apple"); // 1 use
+    }
+
+    #[test]
+    fn compute_tool_stats_empty_for_text_only() {
+        let steps = vec![user_text_step("hi"), assistant_text_step("hello")];
+        let stats = compute_tool_stats(&steps);
+        assert!(stats.is_empty());
+    }
+
+    #[test]
+    fn tool_stats_error_rate_none_when_no_results() {
+        let stats = ToolStats {
+            name: "X".into(),
+            use_count: 1,
+            result_count: 0,
+            error_count: 0,
+        };
+        assert_eq!(stats.error_rate(), None);
     }
 }

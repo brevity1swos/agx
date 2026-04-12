@@ -1,4 +1,4 @@
-use crate::timeline::{Step, StepKind, is_error_result};
+use crate::timeline::{Step, StepKind, ToolStats, compute_tool_stats, is_error_result, truncate};
 use anyhow::Result;
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseButton,
@@ -53,6 +53,8 @@ pub struct App {
     conversation_list_state: ListState,
     three_pane: bool,
     count_buffer: String,
+    tool_stats: Vec<ToolStats>,
+    show_stats: bool,
 }
 
 impl App {
@@ -88,9 +90,16 @@ impl App {
             conversation_list_state,
             three_pane: true,
             count_buffer: String::new(),
+            tool_stats: Vec::new(),
+            show_stats: false,
         };
+        app.tool_stats = compute_tool_stats(&app.steps);
         app.sync_conversation_cursor();
         app
+    }
+
+    fn toggle_stats(&mut self) {
+        self.show_stats = !self.show_stats;
     }
 
     fn append_count_digit(&mut self, c: char) {
@@ -819,6 +828,7 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                         Style::default().add_modifier(Modifier::BOLD),
                     )),
                     Line::from("  ? / F1          toggle this help"),
+                    Line::from("  s               toggle tool usage stats overlay"),
                     Line::from("  Tab             toggle 3-pane / 2-pane layout"),
                     Line::from("  mouse click     select row in timeline"),
                     Line::from("  mouse scroll    prev / next step"),
@@ -883,6 +893,75 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 f.render_widget(Clear, help_area);
                 f.render_widget(help_widget, help_area);
             }
+
+            if app.show_stats {
+                let mut lines = vec![
+                    Line::from(Span::styled(
+                        "agx — tool usage statistics",
+                        Style::default().add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(""),
+                    Line::from(format!(
+                        "Total steps: {}   Unique tools: {}",
+                        app.steps.len(),
+                        app.tool_stats.len()
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        format!(
+                            "{:<22} {:>6} {:>8} {:>8} {:>9}",
+                            "Tool", "uses", "results", "errors", "err%"
+                        ),
+                        Style::default().add_modifier(Modifier::BOLD),
+                    )),
+                ];
+                for s in app.tool_stats.iter().take(18) {
+                    let err_pct = match s.error_rate() {
+                        Some(r) => format!("{:>7.1}%", r * 100.0),
+                        None => "      -".to_string(),
+                    };
+                    let err_color = if s.error_count > 0 {
+                        Color::Red
+                    } else {
+                        Color::White
+                    };
+                    lines.push(Line::from(vec![Span::styled(
+                        format!(
+                            "{:<22} {:>6} {:>8} {:>8} {:>9}",
+                            truncate(&s.name, 22),
+                            s.use_count,
+                            s.result_count,
+                            s.error_count,
+                            err_pct
+                        ),
+                        Style::default().fg(err_color),
+                    )]));
+                }
+                if app.tool_stats.len() > 18 {
+                    lines.push(Line::from(Span::styled(
+                        format!("... ({} more not shown)", app.tool_stats.len() - 18),
+                        Style::default().fg(Color::DarkGray),
+                    )));
+                }
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    "Press any key to dismiss",
+                    Style::default().fg(Color::DarkGray),
+                )));
+
+                let height = u16::try_from(lines.len())
+                    .unwrap_or(u16::MAX)
+                    .saturating_add(2);
+                let area = centered_rect(70, height, f.area());
+                let widget = Paragraph::new(lines).block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(" stats ")
+                        .border_style(Style::default().fg(Color::White)),
+                );
+                f.render_widget(Clear, area);
+                f.render_widget(widget, area);
+            }
         })?;
 
         let ev = event::read()?;
@@ -913,6 +992,12 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
             // Help overlay: any key dismisses.
             if app.show_help {
                 app.show_help = false;
+                continue;
+            }
+
+            // Stats overlay: any key dismisses.
+            if app.show_stats {
+                app.show_stats = false;
                 continue;
             }
 
@@ -1010,6 +1095,10 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                     for _ in 0..n {
                         app.prev_match();
                     }
+                }
+                KeyCode::Char('s') => {
+                    app.clear_count();
+                    app.toggle_stats();
                 }
                 KeyCode::Char('m') => {
                     app.clear_count();
