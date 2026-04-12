@@ -23,7 +23,7 @@ Make agx powerful enough before the public release that cloning it is unambiguou
 | 2 | Time-travel scrubbing bar | ✅ done | Commit `6b38d9f`. Bottom progress bar with Gauge widget. |
 | 3 | Jump to step (`:42`) | ✅ done | Commit `6b38d9f`. Command mode via `:`, number jump. |
 | 8 | Backtrack / error marker detection | ✅ done | Heuristic detection of tool errors in result content — red + bold in timeline. Retry pattern detection deferred to post-release. |
-| 9 | Dual-cursor conversation panel | planned | Three-pane layout: timeline / conversation / detail. Cursor syncs between panes. Structural refactor. |
+| 9 | Dual-cursor conversation panel | ✅ done | Three-pane layout (timeline 25% / conversation 40% / detail 35%), Tab toggles 2-pane fallback. Conversation pane shows text-only flow, cursor syncs to nearest preceding text step. |
 | 10 | Branch / fork visualization | planned | Indent and tree display for parallel tool calls. Depends on feature 9. |
 
 ### Phase 2 — Workflow muscle (usability for long sessions)
@@ -37,7 +37,7 @@ Make agx powerful enough before the public release that cloning it is unambiguou
 | 11 | Vim mode (`--vim`) | planned | Normal/Insert, hjkl/w/b/e, `:` commands, `/` search |
 | 12 | Multi-session browser | planned | No args → interactive picker across Claude / Codex / Gemini recent sessions |
 
-**Progress: 8/12 features done** (~3.5 days of work). Remaining: 4 features, ~5 days.
+**Progress: 9/12 features done** (~5 days of work). Remaining: 3 features, ~3.5 days.
 
 ## Build order (dependency-sorted)
 

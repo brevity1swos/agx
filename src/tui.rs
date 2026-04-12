@@ -48,6 +48,9 @@ pub struct App {
     show_help: bool,
     status_msg: Option<String>,
     list_area: Option<Rect>,
+    conversation_indices: Vec<usize>,
+    conversation_list_state: ListState,
+    three_pane: bool,
 }
 
 impl App {
@@ -58,7 +61,12 @@ impl App {
         }
         let bg_flags = compute_bg_flags(&steps);
         let filtered_view: Vec<usize> = (0..steps.len()).collect();
-        Self {
+        let conversation_indices = compute_conversation_indices(&steps);
+        let mut conversation_list_state = ListState::default();
+        if !conversation_indices.is_empty() {
+            conversation_list_state.select(Some(0));
+        }
+        let mut app = Self {
             steps,
             list_state,
             bg_flags,
@@ -72,7 +80,29 @@ impl App {
             show_help: false,
             status_msg: None,
             list_area: None,
-        }
+            conversation_indices,
+            conversation_list_state,
+            three_pane: true,
+        };
+        app.sync_conversation_cursor();
+        app
+    }
+
+    fn sync_conversation_cursor(&mut self) {
+        let Some(view_idx) = self.list_state.selected() else {
+            self.conversation_list_state.select(None);
+            return;
+        };
+        let Some(&orig) = self.filtered_view.get(view_idx) else {
+            self.conversation_list_state.select(None);
+            return;
+        };
+        let target = self.conversation_indices.iter().rposition(|&i| i <= orig);
+        self.conversation_list_state.select(target);
+    }
+
+    fn toggle_layout(&mut self) {
+        self.three_pane = !self.three_pane;
     }
 
     fn click_to_select(&mut self, view_idx: usize) {
@@ -343,6 +373,19 @@ impl App {
     }
 }
 
+// Collect original step indices of user/assistant text steps, in order.
+// These form the "conversation view" — the flowing read-only pane that
+// complements the step-by-step timeline.
+fn compute_conversation_indices(steps: &[Step]) -> Vec<usize> {
+    steps
+        .iter()
+        .enumerate()
+        .filter_map(|(i, s)| {
+            matches!(s.kind, StepKind::UserText | StepKind::AssistantText).then_some(i)
+        })
+        .collect()
+}
+
 // Returns a Vec<bool> parallel to `steps`. For each ToolUse / ToolResult step,
 // the flag alternates so adjacent tool calls get distinct backgrounds. Text
 // steps get `false` (no alternating bg).
@@ -417,17 +460,39 @@ pub fn run(steps: Vec<Step>) -> Result<()> {
 fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> Result<()> {
     loop {
         terminal.draw(|f| {
+            // Keep the conversation pane cursor in lockstep with the timeline.
+            app.sync_conversation_cursor();
+
             // Outer layout: main area + 1-row status/command bar at the bottom.
             let outer = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Min(1), Constraint::Length(1)])
                 .split(f.area());
 
-            // Main area split into list (40%) and detail (60%).
-            let chunks = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
-                .split(outer[0]);
+            // Main area: either 3-pane (timeline | conversation | detail)
+            // or 2-pane (timeline | detail). Tab toggles.
+            let (chunks, conv_chunk): (std::rc::Rc<[Rect]>, Option<Rect>) = if app.three_pane {
+                let split = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([
+                        Constraint::Percentage(25),
+                        Constraint::Percentage(40),
+                        Constraint::Percentage(35),
+                    ])
+                    .split(outer[0]);
+                // Rearrange as [list, detail] so the existing downstream code
+                // that renders list at chunks[0] and detail at chunks[1] still works.
+                let repacked: std::rc::Rc<[Rect]> = std::rc::Rc::from(vec![split[0], split[2]]);
+                (repacked, Some(split[1]))
+            } else {
+                (
+                    Layout::default()
+                        .direction(Direction::Horizontal)
+                        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+                        .split(outer[0]),
+                    None,
+                )
+            };
             app.list_area = Some(chunks[0]);
 
             let items: Vec<ListItem> = app
@@ -481,6 +546,41 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 );
 
             f.render_stateful_widget(list, chunks[0], &mut app.list_state);
+
+            // Conversation pane (only in three-pane layout).
+            if let Some(conv_area) = conv_chunk {
+                let conv_items: Vec<ListItem> = app
+                    .conversation_indices
+                    .iter()
+                    .filter_map(|&orig| {
+                        let s = app.steps.get(orig)?;
+                        let color = kind_color(s.kind);
+                        let prefix = match s.kind {
+                            StepKind::UserText => "user  ",
+                            StepKind::AssistantText => "asst  ",
+                            _ => "      ",
+                        };
+                        let mut text = String::with_capacity(prefix.len() + 200);
+                        text.push_str(prefix);
+                        for ch in s.detail.chars().take(200) {
+                            text.push(if ch == '\n' { ' ' } else { ch });
+                        }
+                        Some(ListItem::new(Line::from(vec![Span::styled(
+                            text,
+                            Style::default().fg(color),
+                        )])))
+                    })
+                    .collect();
+                let conv_title = format!(" conversation ({}) ", app.conversation_indices.len());
+                let conv_list = List::new(conv_items)
+                    .block(Block::default().borders(Borders::ALL).title(conv_title))
+                    .highlight_style(
+                        Style::default()
+                            .add_modifier(Modifier::REVERSED)
+                            .add_modifier(Modifier::BOLD),
+                    );
+                f.render_stateful_widget(conv_list, conv_area, &mut app.conversation_list_state);
+            }
 
             let (detail_text, detail_kind) = app
                 .list_state
@@ -662,6 +762,7 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                         Style::default().add_modifier(Modifier::BOLD),
                     )),
                     Line::from("  ? / F1          toggle this help"),
+                    Line::from("  Tab             toggle 3-pane / 2-pane layout"),
                     Line::from("  mouse click     select row in timeline"),
                     Line::from("  mouse scroll    prev / next step"),
                     Line::from("  q / Esc         quit"),
@@ -818,6 +919,7 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 KeyCode::Char('N') => app.prev_match(),
                 KeyCode::Char('m') => app.begin_set_mark(),
                 KeyCode::Char('\'') => app.begin_jump_mark(),
+                KeyCode::Tab => app.toggle_layout(),
                 KeyCode::Down | KeyCode::Char('j') => app.next(),
                 KeyCode::Up | KeyCode::Char('k') => app.prev(),
                 KeyCode::PageDown | KeyCode::Char('d') => app.page_down(PAGE_STEP),
@@ -1215,5 +1317,58 @@ mod tests {
         assert_eq!(app.list_state.selected(), Some(1));
         app.click_to_select(5); // beyond filtered view — clamp
         assert_eq!(app.list_state.selected(), Some(1));
+    }
+
+    #[test]
+    fn conversation_indices_include_only_text_steps() {
+        let steps = sample_steps();
+        // sample_steps: user, tool_use, tool_result, tool_use, tool_result, assistant
+        let indices = compute_conversation_indices(&steps);
+        assert_eq!(indices, vec![0, 5]);
+    }
+
+    #[test]
+    fn conversation_indices_empty_for_no_text_steps() {
+        let steps = vec![
+            tool_use_step("t1", "Read", "{}"),
+            tool_result_step("t1", "ok", Some("Read"), Some("{}")),
+        ];
+        let indices = compute_conversation_indices(&steps);
+        assert!(indices.is_empty());
+    }
+
+    #[test]
+    fn sync_conversation_cursor_on_user_step_selects_user() {
+        let mut app = App::new(sample_steps());
+        app.list_state.select(Some(0));
+        app.sync_conversation_cursor();
+        assert_eq!(app.conversation_list_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn sync_conversation_cursor_on_tool_step_selects_prior_text() {
+        let mut app = App::new(sample_steps());
+        app.list_state.select(Some(3)); // tool_use Bash
+        app.sync_conversation_cursor();
+        // orig=3; rposition finds largest i<=3 in [0, 5] -> 0 (user)
+        assert_eq!(app.conversation_list_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn sync_conversation_cursor_on_final_assistant() {
+        let mut app = App::new(sample_steps());
+        app.list_state.select(Some(5));
+        app.sync_conversation_cursor();
+        assert_eq!(app.conversation_list_state.selected(), Some(1));
+    }
+
+    #[test]
+    fn toggle_layout_flips_three_pane_flag() {
+        let mut app = App::new(sample_steps());
+        assert!(app.three_pane);
+        app.toggle_layout();
+        assert!(!app.three_pane);
+        app.toggle_layout();
+        assert!(app.three_pane);
     }
 }
