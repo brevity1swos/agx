@@ -1,4 +1,4 @@
-use crate::timeline::{Step, StepKind};
+use crate::timeline::{Step, StepKind, is_error_result};
 use anyhow::Result;
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseButton,
@@ -436,8 +436,16 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 .enumerate()
                 .filter_map(|(view_idx, &orig_idx)| {
                     let s = app.steps.get(orig_idx)?;
-                    let color = kind_color(s.kind);
+                    let is_error = is_error_result(s);
+                    let color = if is_error {
+                        Color::Red
+                    } else {
+                        kind_color(s.kind)
+                    };
                     let mut style = Style::default().fg(color);
+                    if is_error {
+                        style = style.add_modifier(Modifier::BOLD);
+                    }
                     let is_match = app.search_matches.binary_search(&view_idx).is_ok();
                     if is_match {
                         style = style.bg(SEARCH_HIT_BG).add_modifier(Modifier::BOLD);
@@ -681,6 +689,14 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                         Span::raw("  "),
                         Span::styled("magenta", Style::default().fg(Color::Magenta)),
                         Span::raw(" tool_result (alternating bg per result)"),
+                    ]),
+                    Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled(
+                            "red    ",
+                            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw("error (failed tool call, heuristic)"),
                     ]),
                     Line::from(""),
                     Line::from(Span::styled(

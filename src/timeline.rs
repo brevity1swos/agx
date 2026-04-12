@@ -29,6 +29,47 @@ pub struct StepCounts {
     pub tool_results: usize,
 }
 
+// Heuristic: does this step look like a failed tool call?
+// Only examines ToolResult steps. Extracts the "Result:" section of the
+// step detail and scans for substring indicators common across Claude Code,
+// Codex, and Gemini error outputs. Conservative — prefers false negatives
+// over false positives so users can trust the red marker.
+pub fn is_error_result(step: &Step) -> bool {
+    if step.kind != StepKind::ToolResult {
+        return false;
+    }
+    let haystack = step
+        .detail
+        .split("\nResult:\n")
+        .nth(1)
+        .unwrap_or(&step.detail)
+        .to_lowercase();
+    const INDICATORS: &[&str] = &[
+        "\"error\"",
+        "error:",
+        " failed",
+        "\nfailed",
+        "traceback",
+        "panic!",
+        "exception:",
+        "no such file",
+        "permission denied",
+        "command failed",
+        "exit code 1",
+        "exit code 2",
+        "exit code 3",
+        "exit code 4",
+        "exit code 5",
+        "exit code 6",
+        "exit code 7",
+        "exit code 8",
+        "exit code 9",
+        "process exited with code 1",
+        "process exited with code 2",
+    ];
+    INDICATORS.iter().any(|kw| haystack.contains(kw))
+}
+
 pub fn count_from_steps(steps: &[Step]) -> StepCounts {
     let mut c = StepCounts::default();
     for step in steps {
@@ -365,5 +406,71 @@ mod tests {
     fn short_id_handles_exact_twelve_boundary() {
         assert_eq!(short_id("123456789012"), "123456789012");
         assert_eq!(short_id("1234567890123"), "12345678901…");
+    }
+
+    fn result_step_with_body(body: &str) -> Step {
+        tool_result_step("t1", body, Some("Bash"), Some("{}"))
+    }
+
+    #[test]
+    fn is_error_result_detects_error_keyword() {
+        let step = result_step_with_body("error: file not found");
+        assert!(is_error_result(&step));
+    }
+
+    #[test]
+    fn is_error_result_detects_failed_word() {
+        let step = result_step_with_body("Command failed with exit code 1");
+        assert!(is_error_result(&step));
+    }
+
+    #[test]
+    fn is_error_result_detects_traceback() {
+        let step = result_step_with_body("Traceback (most recent call last):\n  ...");
+        assert!(is_error_result(&step));
+    }
+
+    #[test]
+    fn is_error_result_detects_no_such_file() {
+        let step = result_step_with_body("ls: /nonexistent: No such file or directory");
+        assert!(is_error_result(&step));
+    }
+
+    #[test]
+    fn is_error_result_detects_exit_code_nonzero() {
+        let step = result_step_with_body("Process exited with code 127");
+        // Not in our list — we check 1-9 and 1-2 for process exited
+        // For "exit code 127" the substring "exit code 1" matches, so it's detected
+        assert!(is_error_result(&step));
+    }
+
+    #[test]
+    fn is_error_result_detects_json_error_field() {
+        let step = result_step_with_body("{\"error\": \"bad request\"}");
+        assert!(is_error_result(&step));
+    }
+
+    #[test]
+    fn is_error_result_returns_false_for_clean_output() {
+        let step = result_step_with_body("[0, 1, 1, 2, 3, 5, 8, 13, 21, 34]");
+        assert!(!is_error_result(&step));
+    }
+
+    #[test]
+    fn is_error_result_returns_false_for_non_tool_result() {
+        let step = user_text_step("error in my user message");
+        assert!(!is_error_result(&step));
+    }
+
+    #[test]
+    fn is_error_result_only_checks_result_section() {
+        // Input section mentions "error" but Result section is clean.
+        let step = tool_result_step(
+            "t1",
+            "all good",
+            Some("Bash"),
+            Some("{\"command\": \"grep error\"}"),
+        );
+        assert!(!is_error_result(&step));
     }
 }
