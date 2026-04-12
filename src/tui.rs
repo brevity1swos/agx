@@ -2,6 +2,7 @@ use crate::timeline::{
     Step, StepKind, ToolStats, compute_tool_stats, format_duration_ms, is_error_result, truncate,
 };
 use anyhow::Result;
+use arboard::Clipboard;
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseButton,
     MouseEventKind,
@@ -102,6 +103,33 @@ impl App {
 
     fn toggle_stats(&mut self) {
         self.show_stats = !self.show_stats;
+    }
+
+    fn copy_current_step(&mut self) {
+        let Some(view_idx) = self.list_state.selected() else {
+            self.status_msg = Some("nothing to copy".into());
+            return;
+        };
+        let Some(&orig) = self.filtered_view.get(view_idx) else {
+            self.status_msg = Some("nothing to copy".into());
+            return;
+        };
+        let Some(step) = self.steps.get(orig) else {
+            self.status_msg = Some("nothing to copy".into());
+            return;
+        };
+        match Clipboard::new().and_then(|mut cb| cb.set_text(step.detail.clone())) {
+            Ok(()) => {
+                self.status_msg = Some(format!(
+                    "copied step {} to clipboard ({} chars)",
+                    orig + 1,
+                    step.detail.len()
+                ));
+            }
+            Err(e) => {
+                self.status_msg = Some(format!("clipboard error: {e}"));
+            }
+        }
     }
 
     fn append_count_digit(&mut self, c: char) {
@@ -839,6 +867,7 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                         "Other",
                         Style::default().add_modifier(Modifier::BOLD),
                     )),
+                    Line::from("  y               copy current step to clipboard"),
                     Line::from("  ? / F1          toggle this help"),
                     Line::from("  s               toggle tool usage stats overlay"),
                     Line::from("  Tab             toggle 3-pane / 2-pane layout"),
@@ -1107,6 +1136,10 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                     for _ in 0..n {
                         app.prev_match();
                     }
+                }
+                KeyCode::Char('y') => {
+                    app.clear_count();
+                    app.copy_current_step();
                 }
                 KeyCode::Char('s') => {
                     app.clear_count();
