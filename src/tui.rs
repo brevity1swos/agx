@@ -1,6 +1,9 @@
 use crate::timeline::{Step, StepKind};
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseButton,
+    MouseEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -44,6 +47,7 @@ pub struct App {
     input_mode: Option<InputMode>,
     show_help: bool,
     status_msg: Option<String>,
+    list_area: Option<Rect>,
 }
 
 impl App {
@@ -67,7 +71,16 @@ impl App {
             input_mode: None,
             show_help: false,
             status_msg: None,
+            list_area: None,
         }
+    }
+
+    fn click_to_select(&mut self, view_idx: usize) {
+        if self.filtered_view.is_empty() {
+            return;
+        }
+        let clamped = view_idx.min(self.filtered_view.len() - 1);
+        self.list_state.select(Some(clamped));
     }
 
     fn visible_count(&self) -> usize {
@@ -380,13 +393,13 @@ struct TerminalGuard;
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        let _ = execute!(io::stdout(), DisableMouseCapture, LeaveAlternateScreen);
     }
 }
 
 pub fn run(steps: Vec<Step>) -> Result<()> {
     enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen)?;
+    execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
     let _guard = TerminalGuard;
 
     let backend = CrosstermBackend::new(io::stdout());
@@ -415,6 +428,7 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
                 .split(outer[0]);
+            app.list_area = Some(chunks[0]);
 
             let items: Vec<ListItem> = app
                 .filtered_view
@@ -640,6 +654,8 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                         Style::default().add_modifier(Modifier::BOLD),
                     )),
                     Line::from("  ? / F1          toggle this help"),
+                    Line::from("  mouse click     select row in timeline"),
+                    Line::from("  mouse scroll    prev / next step"),
                     Line::from("  q / Esc         quit"),
                     Line::from(""),
                     Line::from(Span::styled(
@@ -690,7 +706,29 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
             }
         })?;
 
-        if let Event::Key(key) = event::read()?
+        let ev = event::read()?;
+        if let Event::Mouse(mouse) = ev {
+            match mouse.kind {
+                MouseEventKind::ScrollUp => app.prev(),
+                MouseEventKind::ScrollDown => app.next(),
+                MouseEventKind::Down(MouseButton::Left) => {
+                    if let Some(area) = app.list_area
+                        && mouse.row > area.y
+                        && mouse.row < area.y + area.height - 1
+                        && mouse.column > area.x
+                        && mouse.column < area.x + area.width - 1
+                    {
+                        // Inside the list, excluding the border.
+                        let row_within_list = usize::from(mouse.row - area.y - 1);
+                        let view_idx = app.list_state.offset() + row_within_list;
+                        app.click_to_select(view_idx);
+                    }
+                }
+                _ => {}
+            }
+            continue;
+        }
+        if let Event::Key(key) = ev
             && key.kind == KeyEventKind::Press
         {
             // Help overlay: any key dismisses.
@@ -1136,5 +1174,30 @@ mod tests {
         assert_eq!(app.pending, Some(PendingKey::SetMark));
         app.cancel_pending();
         assert_eq!(app.pending, None);
+    }
+
+    #[test]
+    fn click_to_select_sets_index() {
+        let mut app = App::new(sample_steps());
+        app.click_to_select(3);
+        assert_eq!(app.list_state.selected(), Some(3));
+    }
+
+    #[test]
+    fn click_to_select_clamps_out_of_bounds() {
+        let mut app = App::new(sample_steps());
+        app.click_to_select(999);
+        assert_eq!(app.list_state.selected(), Some(5));
+    }
+
+    #[test]
+    fn click_to_select_respects_filter() {
+        let mut app = App::new(sample_steps());
+        app.apply_filter("[tool]");
+        assert_eq!(app.visible_count(), 2);
+        app.click_to_select(1);
+        assert_eq!(app.list_state.selected(), Some(1));
+        app.click_to_select(5); // beyond filtered view — clamp
+        assert_eq!(app.list_state.selected(), Some(1));
     }
 }

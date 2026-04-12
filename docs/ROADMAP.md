@@ -33,11 +33,11 @@ Make agx powerful enough before the public release that cloning it is unambiguou
 | 4 | Filter by tool name / step kind | ✅ done | Commit `76e2f94`. `f` opens filter prompt, case-insensitive substring match against step labels. |
 | 5 | Content search (`/pattern`) | ✅ done | Commit `ef1dd11`. `/` to search label + detail, `n`/`N` to navigate matches with wrap, distinct highlight bg. |
 | 6 | Bookmarks | ✅ done | Commit `95addb0`. `m<char>` sets, `'<char>` jumps. Stored by original step index, survives filter cycles, reports hidden-by-filter. |
-| 7 | Mouse support | planned | Click-to-select, scroll-to-navigate, drag scrubbing bar |
+| 7 | Mouse support | ✅ done | Click-to-select on timeline rows, scroll-wheel prev/next. |
 | 11 | Vim mode (`--vim`) | planned | Normal/Insert, hjkl/w/b/e, `:` commands, `/` search |
 | 12 | Multi-session browser | planned | No args → interactive picker across Claude / Codex / Gemini recent sessions |
 
-**Progress: 6/12 features done** (~2.5 days of work). Remaining: 6 features, ~6.5 days.
+**Progress: 7/12 features done** (~3 days of work). Remaining: 5 features, ~6 days.
 
 ## Build order (dependency-sorted)
 
