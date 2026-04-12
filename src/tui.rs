@@ -11,6 +11,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Wrap};
+use std::collections::HashMap;
 use std::io;
 
 const PAGE_STEP: usize = 10;
@@ -24,6 +25,12 @@ enum InputMode {
     Search(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingKey {
+    SetMark,
+    JumpMark,
+}
+
 pub struct App {
     steps: Vec<Step>,
     list_state: ListState,
@@ -32,6 +39,8 @@ pub struct App {
     filter: Option<String>,
     search: Option<String>,
     search_matches: Vec<usize>,
+    bookmarks: HashMap<char, usize>,
+    pending: Option<PendingKey>,
     input_mode: Option<InputMode>,
     show_help: bool,
     status_msg: Option<String>,
@@ -53,6 +62,8 @@ impl App {
             filter: None,
             search: None,
             search_matches: Vec::new(),
+            bookmarks: HashMap::new(),
+            pending: None,
             input_mode: None,
             show_help: false,
             status_msg: None,
@@ -128,6 +139,51 @@ impl App {
         let existing = self.search.clone().unwrap_or_default();
         self.input_mode = Some(InputMode::Search(existing));
         self.status_msg = None;
+    }
+
+    fn begin_set_mark(&mut self) {
+        self.pending = Some(PendingKey::SetMark);
+        self.status_msg = None;
+    }
+
+    fn begin_jump_mark(&mut self) {
+        self.pending = Some(PendingKey::JumpMark);
+        self.status_msg = None;
+    }
+
+    fn cancel_pending(&mut self) {
+        self.pending = None;
+    }
+
+    fn set_mark(&mut self, ch: char) {
+        let Some(view_idx) = self.list_state.selected() else {
+            self.status_msg = Some("no current step to bookmark".into());
+            return;
+        };
+        let Some(&orig) = self.filtered_view.get(view_idx) else {
+            self.status_msg = Some("no current step to bookmark".into());
+            return;
+        };
+        self.bookmarks.insert(ch, orig);
+        self.status_msg = Some(format!("bookmark '{ch}' set at step {}", orig + 1));
+    }
+
+    fn jump_to_mark(&mut self, ch: char) {
+        let Some(&orig) = self.bookmarks.get(&ch) else {
+            self.status_msg = Some(format!("no bookmark '{ch}'"));
+            return;
+        };
+        match self.filtered_view.iter().position(|&i| i == orig) {
+            Some(view_idx) => {
+                self.list_state.select(Some(view_idx));
+            }
+            None => {
+                self.status_msg = Some(format!(
+                    "bookmark '{ch}' points to step {} (hidden by filter)",
+                    orig + 1
+                ));
+            }
+        }
     }
 
     fn goto_step(&mut self, step_num: usize) {
@@ -435,90 +491,104 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
 
             f.render_widget(detail_widget, chunks[1]);
 
-            // Bottom bar: input line (command / filter / search), status msg, or scrubbing gauge.
-            match &app.input_mode {
-                Some(InputMode::Command(buf)) => {
-                    let line = Paragraph::new(Line::from(vec![
-                        Span::styled(":", Style::default().fg(Color::Yellow)),
-                        Span::raw(buf.as_str()),
-                        Span::styled(
-                            "█",
-                            Style::default()
-                                .fg(Color::Yellow)
-                                .add_modifier(Modifier::SLOW_BLINK),
-                        ),
-                    ]));
-                    f.render_widget(line, outer[1]);
-                }
-                Some(InputMode::Filter(buf)) => {
-                    let line = Paragraph::new(Line::from(vec![
-                        Span::styled(
-                            "filter> ",
-                            Style::default()
-                                .fg(Color::Cyan)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw(buf.as_str()),
-                        Span::styled(
-                            "█",
-                            Style::default()
-                                .fg(Color::Cyan)
-                                .add_modifier(Modifier::SLOW_BLINK),
-                        ),
-                    ]));
-                    f.render_widget(line, outer[1]);
-                }
-                Some(InputMode::Search(buf)) => {
-                    let line = Paragraph::new(Line::from(vec![
-                        Span::styled(
-                            "/",
-                            Style::default()
-                                .fg(Color::Yellow)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw(buf.as_str()),
-                        Span::styled(
-                            "█",
-                            Style::default()
-                                .fg(Color::Yellow)
-                                .add_modifier(Modifier::SLOW_BLINK),
-                        ),
-                    ]));
-                    f.render_widget(line, outer[1]);
-                }
-                None => {
-                    if let Some(msg) = &app.status_msg {
-                        let line = Paragraph::new(Line::from(vec![Span::styled(
-                            msg.as_str(),
-                            Style::default().fg(Color::Red),
-                        )]));
+            // Bottom bar: pending hint, input line, status msg, or scrubbing gauge.
+            if let Some(pending) = app.pending {
+                let hint = match pending {
+                    PendingKey::SetMark => "set mark: press a-z to bookmark current step",
+                    PendingKey::JumpMark => "jump to mark: press a-z to navigate",
+                };
+                let line = Paragraph::new(Line::from(vec![Span::styled(
+                    hint,
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )]));
+                f.render_widget(line, outer[1]);
+            } else {
+                match &app.input_mode {
+                    Some(InputMode::Command(buf)) => {
+                        let line = Paragraph::new(Line::from(vec![
+                            Span::styled(":", Style::default().fg(Color::Yellow)),
+                            Span::raw(buf.as_str()),
+                            Span::styled(
+                                "█",
+                                Style::default()
+                                    .fg(Color::Yellow)
+                                    .add_modifier(Modifier::SLOW_BLINK),
+                            ),
+                        ]));
                         f.render_widget(line, outer[1]);
-                    } else {
-                        let ratio = if total == 0 {
-                            0.0
-                        } else {
-                            #[allow(clippy::cast_precision_loss)]
-                            let r = current as f64 / total as f64;
-                            r.clamp(0.0, 1.0)
-                        };
-                        let mut parts = vec![format!("{current}/{total}")];
-                        if let Some(q) = &app.filter {
-                            parts.push(format!("filter: {q}"));
-                        }
-                        if let Some(q) = &app.search {
-                            parts.push(format!("search: {q} ({})", app.search_matches.len()));
-                        }
-                        let label = parts.join("  ");
-                        let gauge = Gauge::default()
-                            .gauge_style(
+                    }
+                    Some(InputMode::Filter(buf)) => {
+                        let line = Paragraph::new(Line::from(vec![
+                            Span::styled(
+                                "filter> ",
                                 Style::default()
                                     .fg(Color::Cyan)
-                                    .bg(Color::Reset)
                                     .add_modifier(Modifier::BOLD),
-                            )
-                            .ratio(ratio)
-                            .label(label);
-                        f.render_widget(gauge, outer[1]);
+                            ),
+                            Span::raw(buf.as_str()),
+                            Span::styled(
+                                "█",
+                                Style::default()
+                                    .fg(Color::Cyan)
+                                    .add_modifier(Modifier::SLOW_BLINK),
+                            ),
+                        ]));
+                        f.render_widget(line, outer[1]);
+                    }
+                    Some(InputMode::Search(buf)) => {
+                        let line = Paragraph::new(Line::from(vec![
+                            Span::styled(
+                                "/",
+                                Style::default()
+                                    .fg(Color::Yellow)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                            Span::raw(buf.as_str()),
+                            Span::styled(
+                                "█",
+                                Style::default()
+                                    .fg(Color::Yellow)
+                                    .add_modifier(Modifier::SLOW_BLINK),
+                            ),
+                        ]));
+                        f.render_widget(line, outer[1]);
+                    }
+                    None => {
+                        if let Some(msg) = &app.status_msg {
+                            let line = Paragraph::new(Line::from(vec![Span::styled(
+                                msg.as_str(),
+                                Style::default().fg(Color::Red),
+                            )]));
+                            f.render_widget(line, outer[1]);
+                        } else {
+                            let ratio = if total == 0 {
+                                0.0
+                            } else {
+                                #[allow(clippy::cast_precision_loss)]
+                                let r = current as f64 / total as f64;
+                                r.clamp(0.0, 1.0)
+                            };
+                            let mut parts = vec![format!("{current}/{total}")];
+                            if let Some(q) = &app.filter {
+                                parts.push(format!("filter: {q}"));
+                            }
+                            if let Some(q) = &app.search {
+                                parts.push(format!("search: {q} ({})", app.search_matches.len()));
+                            }
+                            let label = parts.join("  ");
+                            let gauge = Gauge::default()
+                                .gauge_style(
+                                    Style::default()
+                                        .fg(Color::Cyan)
+                                        .bg(Color::Reset)
+                                        .add_modifier(Modifier::BOLD),
+                                )
+                                .ratio(ratio)
+                                .label(label);
+                            f.render_widget(gauge, outer[1]);
+                        }
                     }
                 }
             }
@@ -557,6 +627,13 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                     Line::from("  n               next match"),
                     Line::from("  N               prev match"),
                     Line::from("  (empty enter)   clear current search"),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "Bookmarks",
+                        Style::default().add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from("  m<char>         set bookmark at current step"),
+                    Line::from("  '<char>         jump to bookmark"),
                     Line::from(""),
                     Line::from(Span::styled(
                         "Other",
@@ -622,6 +699,18 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 continue;
             }
 
+            // Pending bookmark key (m<char> or '<char>): consume the next event.
+            if let Some(pending) = app.pending {
+                if let KeyCode::Char(c) = key.code {
+                    match pending {
+                        PendingKey::SetMark => app.set_mark(c),
+                        PendingKey::JumpMark => app.jump_to_mark(c),
+                    }
+                }
+                app.cancel_pending();
+                continue;
+            }
+
             // Input mode (command / filter / search): its own keybinding scope.
             if app.input_mode.is_some() {
                 match key.code {
@@ -673,6 +762,8 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 KeyCode::Char('/') => app.enter_search_mode(),
                 KeyCode::Char('n') => app.next_match(),
                 KeyCode::Char('N') => app.prev_match(),
+                KeyCode::Char('m') => app.begin_set_mark(),
+                KeyCode::Char('\'') => app.begin_jump_mark(),
                 KeyCode::Down | KeyCode::Char('j') => app.next(),
                 KeyCode::Up | KeyCode::Char('k') => app.prev(),
                 KeyCode::PageDown | KeyCode::Char('d') => app.page_down(PAGE_STEP),
@@ -949,5 +1040,101 @@ mod tests {
         // not in [tool] filter (it's [result]), and user text not in filter either.
         // So 0 matches now.
         assert_eq!(app.search_matches.len(), 0);
+    }
+
+    #[test]
+    fn set_mark_stores_current_step_by_char() {
+        let mut app = App::new(sample_steps());
+        app.list_state.select(Some(3));
+        app.set_mark('a');
+        assert_eq!(app.bookmarks.get(&'a').copied(), Some(3));
+        assert!(app.status_msg.as_ref().unwrap().contains("set at step 4"));
+    }
+
+    #[test]
+    fn jump_to_mark_restores_position() {
+        let mut app = App::new(sample_steps());
+        app.list_state.select(Some(2));
+        app.set_mark('x');
+        app.list_state.select(Some(0));
+        app.jump_to_mark('x');
+        assert_eq!(app.list_state.selected(), Some(2));
+    }
+
+    #[test]
+    fn jump_to_mark_unknown_char_sets_error() {
+        let mut app = App::new(sample_steps());
+        app.jump_to_mark('z');
+        assert!(app.status_msg.as_ref().unwrap().contains("no bookmark 'z'"));
+    }
+
+    #[test]
+    fn overwriting_a_bookmark_replaces_position() {
+        let mut app = App::new(sample_steps());
+        app.list_state.select(Some(1));
+        app.set_mark('a');
+        app.list_state.select(Some(4));
+        app.set_mark('a');
+        assert_eq!(app.bookmarks.get(&'a').copied(), Some(4));
+    }
+
+    #[test]
+    fn multiple_distinct_bookmarks_coexist() {
+        let mut app = App::new(sample_steps());
+        app.list_state.select(Some(1));
+        app.set_mark('a');
+        app.list_state.select(Some(3));
+        app.set_mark('b');
+        app.list_state.select(Some(5));
+        app.set_mark('c');
+        app.list_state.select(Some(0));
+        app.jump_to_mark('b');
+        assert_eq!(app.list_state.selected(), Some(3));
+        app.jump_to_mark('a');
+        assert_eq!(app.list_state.selected(), Some(1));
+        app.jump_to_mark('c');
+        assert_eq!(app.list_state.selected(), Some(5));
+    }
+
+    #[test]
+    fn bookmark_survives_filter_cycle() {
+        let mut app = App::new(sample_steps());
+        // Bookmark step 4 (Bash tool_use, original index 3)
+        app.list_state.select(Some(3));
+        app.set_mark('b');
+        // Apply a filter that still includes the bookmarked step
+        app.apply_filter("[tool]");
+        assert_eq!(app.visible_count(), 2);
+        // Bookmark step's original index (3) must be re-findable in filtered_view
+        app.list_state.select(Some(0));
+        app.jump_to_mark('b');
+        // In the filtered view, original step 3 is at filtered position 1
+        assert_eq!(app.list_state.selected(), Some(1));
+    }
+
+    #[test]
+    fn jump_to_mark_reports_hidden_by_filter() {
+        let mut app = App::new(sample_steps());
+        // Bookmark user text at step 0
+        app.list_state.select(Some(0));
+        app.set_mark('u');
+        // Filter away user text
+        app.apply_filter("[tool]");
+        app.jump_to_mark('u');
+        assert!(
+            app.status_msg
+                .as_ref()
+                .unwrap()
+                .contains("hidden by filter")
+        );
+    }
+
+    #[test]
+    fn cancel_pending_clears_state() {
+        let mut app = App::new(sample_steps());
+        app.begin_set_mark();
+        assert_eq!(app.pending, Some(PendingKey::SetMark));
+        app.cancel_pending();
+        assert_eq!(app.pending, None);
     }
 }
