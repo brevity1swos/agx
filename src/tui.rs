@@ -57,6 +57,8 @@ pub struct App {
     three_pane: bool,
     count_buffer: String,
     tool_stats: Vec<ToolStats>,
+    heatmap: Vec<u8>,
+    show_heatmap: bool,
     show_stats: bool,
 }
 
@@ -94,11 +96,18 @@ impl App {
             three_pane: true,
             count_buffer: String::new(),
             tool_stats: Vec::new(),
+            heatmap: Vec::new(),
+            show_heatmap: false,
             show_stats: false,
         };
         app.tool_stats = compute_tool_stats(&app.steps);
+        app.heatmap = compute_heatmap(&app.steps);
         app.sync_conversation_cursor();
         app
+    }
+
+    fn toggle_heatmap(&mut self) {
+        self.show_heatmap = !self.show_heatmap;
     }
 
     fn toggle_stats(&mut self) {
@@ -437,6 +446,34 @@ impl App {
     }
 }
 
+const HEATMAP_WINDOW: usize = 5;
+
+fn compute_heatmap(steps: &[Step]) -> Vec<u8> {
+    let len = steps.len();
+    (0..len)
+        .map(|i| {
+            let lo = i.saturating_sub(HEATMAP_WINDOW);
+            let hi = (i + HEATMAP_WINDOW + 1).min(len);
+            let count = steps[lo..hi]
+                .iter()
+                .filter(|s| matches!(s.kind, StepKind::ToolUse | StepKind::ToolResult))
+                .count();
+            u8::try_from(count).unwrap_or(u8::MAX)
+        })
+        .collect()
+}
+
+fn density_color(density: u8) -> Option<Color> {
+    match density {
+        0 => None,
+        1..=2 => Some(Color::Indexed(17)),
+        3..=4 => Some(Color::Indexed(22)),
+        5..=7 => Some(Color::Indexed(130)),
+        8..=10 => Some(Color::Indexed(208)),
+        _ => Some(Color::Indexed(196)),
+    }
+}
+
 // Detect runs of 2+ consecutive tool_use or tool_result steps. These are
 // batched parallel tool calls (Claude Code parallel Agent dispatches,
 // Codex batched function_calls). Returns a flag per original step index.
@@ -605,6 +642,12 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                     let is_match = app.search_matches.binary_search(&view_idx).is_ok();
                     if is_match {
                         style = style.bg(SEARCH_HIT_BG).add_modifier(Modifier::BOLD);
+                    } else if app.show_heatmap {
+                        if let Some(color) =
+                            app.heatmap.get(orig_idx).copied().and_then(density_color)
+                        {
+                            style = style.bg(color);
+                        }
                     } else if app.bg_flags.get(orig_idx).copied().unwrap_or(false) {
                         style = style.bg(ALT_BG);
                     }
@@ -868,6 +911,7 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                         Style::default().add_modifier(Modifier::BOLD),
                     )),
                     Line::from("  y               copy current step to clipboard"),
+                    Line::from("  h               toggle heatmap mode (tool-call density)"),
                     Line::from("  ? / F1          toggle this help"),
                     Line::from("  s               toggle tool usage stats overlay"),
                     Line::from("  Tab             toggle 3-pane / 2-pane layout"),
@@ -1140,6 +1184,10 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 KeyCode::Char('y') => {
                     app.clear_count();
                     app.copy_current_step();
+                }
+                KeyCode::Char('h') => {
+                    app.clear_count();
+                    app.toggle_heatmap();
                 }
                 KeyCode::Char('s') => {
                     app.clear_count();
