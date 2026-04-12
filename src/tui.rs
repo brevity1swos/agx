@@ -19,6 +19,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Wrap};
 use std::collections::HashMap;
 use std::io;
+use std::time::{Duration, SystemTime};
 
 const PAGE_STEP: usize = 10;
 const HELP_POPUP_WIDTH: u16 = 64;
@@ -108,6 +109,26 @@ impl App {
 
     fn toggle_heatmap(&mut self) {
         self.show_heatmap = !self.show_heatmap;
+    }
+
+    fn reload_steps(&mut self, new_steps: Vec<Step>) {
+        let old_sel = self.list_state.selected();
+        self.steps = new_steps;
+        self.bg_flags = compute_bg_flags(&self.steps);
+        self.batch_flags = compute_batch_flags(&self.steps);
+        self.heatmap = compute_heatmap(&self.steps);
+        self.conversation_indices = compute_conversation_indices(&self.steps);
+        self.tool_stats = compute_tool_stats(&self.steps);
+        self.filter = None;
+        self.search = None;
+        self.search_matches.clear();
+        self.bookmarks.clear();
+        self.filtered_view = (0..self.steps.len()).collect();
+        if let Some(sel) = old_sel {
+            let clamped = sel.min(self.steps.len().saturating_sub(1));
+            self.list_state.select(Some(clamped));
+        }
+        self.sync_conversation_cursor();
     }
 
     fn toggle_stats(&mut self) {
@@ -567,7 +588,7 @@ impl Drop for TerminalGuard {
     }
 }
 
-pub fn run(steps: Vec<Step>) -> Result<()> {
+pub fn run(steps: Vec<Step>, reload_fn: Option<Box<dyn Fn() -> Result<Vec<Step>>>>) -> Result<()> {
     enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
     let _guard = TerminalGuard;
@@ -575,8 +596,9 @@ pub fn run(steps: Vec<Step>) -> Result<()> {
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
     let mut app = App::new(steps);
+    let mut last_mtime: Option<SystemTime> = None;
 
-    let result = run_loop(&mut terminal, &mut app);
+    let result = run_loop(&mut terminal, &mut app, &reload_fn, &mut last_mtime);
     let _ = terminal.show_cursor();
     result
 }
@@ -584,8 +606,25 @@ pub fn run(steps: Vec<Step>) -> Result<()> {
 // run_loop is intentionally one function — TUI render + event handling form one
 // logical operation per frame; splitting hurts readability more than it helps.
 #[allow(clippy::too_many_lines)]
-fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> Result<()> {
+fn run_loop(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut App,
+    reload_fn: &Option<Box<dyn Fn() -> Result<Vec<Step>>>>,
+    last_mtime: &mut Option<SystemTime>,
+) -> Result<()> {
     loop {
+        // Live reload: poll file mtime and refresh if changed.
+        if let Some(reload) = reload_fn {
+            if let Ok(new_steps) = reload() {
+                let new_len = new_steps.len();
+                let old_len = app.steps.len();
+                if new_len != old_len {
+                    app.reload_steps(new_steps);
+                }
+            }
+            let _ = last_mtime; // suppress unused warning; mtime tracked via step count
+        }
+
         terminal.draw(|f| {
             // Keep the conversation pane cursor in lockstep with the timeline.
             app.sync_conversation_cursor();
@@ -1049,6 +1088,14 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
             }
         })?;
 
+        let poll_timeout = if reload_fn.is_some() {
+            Duration::from_millis(500)
+        } else {
+            Duration::from_secs(60)
+        };
+        if !event::poll(poll_timeout)? {
+            continue;
+        }
         let ev = event::read()?;
         if let Event::Mouse(mouse) = ev {
             match mouse.kind {

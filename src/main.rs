@@ -31,6 +31,10 @@ struct Cli {
     /// Compare two sessions side-by-side (text summary)
     #[arg(long)]
     diff: Option<PathBuf>,
+
+    /// Live mode: watch for file changes and auto-refresh
+    #[arg(long)]
+    live: bool,
 }
 
 fn load_session(path: &Path) -> Result<Vec<Step>> {
@@ -159,6 +163,12 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    tui::run(steps)?;
+    let reload_fn: Option<Box<dyn Fn() -> Result<Vec<Step>>>> = if cli.live {
+        let path = session_path.clone();
+        Some(Box::new(move || load_session(&path)))
+    } else {
+        None
+    };
+    tui::run(steps, reload_fn)?;
     Ok(())
 }
