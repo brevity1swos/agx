@@ -105,30 +105,37 @@ Built 11 timeline steps. First 20:
 
 ## Status
 
-**v0.1.0 — prototype.** Everything in "Working" below works end-to-end on real Claude Code session files, including sessions with thousands of entries.
+Everything below works end-to-end on real sessions from all three supported CLIs, including sessions with thousands of entries.
 
 ### Working
 
-- Claude Code session JSONL parser (serde-based, gracefully handles unknown entry types and schema drift)
-- Timeline builder with bidirectional `tool_use ↔ tool_result` pairing via a two-pass name/input lookup
-- Two-pane ratatui TUI with color-coded steps and contextual detail pane
-- Help overlay with keybinding reference and color legend
-- Vim-style and arrow-key navigation
-- Panic-safe terminal cleanup (Drop-guarded raw mode, so a crash does not leave your shell broken)
-- Non-interactive `--summary` mode for scripts and CI
-- 17 unit tests, clippy-clean under strict and pedantic lint groups, `cargo audit` clean
+- **Multi-format support**: Claude Code, Codex CLI, and Gemini CLI sessions with auto-detection (see Format support table)
+- **Multi-session browser**: launch with no args to scan `~/.claude`, `~/.codex`, `~/.gemini` for recent sessions
+- **Three-pane layout**: timeline / conversation view / detail pane (Tab toggles 2-pane fallback)
+- **Bidirectional tool pairing**: each tool_result shows both the originating call input and the response
+- **Alternating step colors** + **batch/fork markers** (`║` prefix for parallel tool dispatches)
+- **Error detection**: heuristic-based tool error highlighting (red + bold) across all formats
+- **Latency annotations**: per-step duration computed from timestamps, shown in detail pane
+- **Filter** (`f`): case-insensitive substring match, hides non-matching rows
+- **Search** (`/`): highlights matches with distinct bg, `n`/`N` to navigate hits
+- **Bookmarks** (`m<char>` / `'<char>`): survive filter cycles, report hidden-by-filter
+- **Jump to step** (`:N`): command-mode numeric jump
+- **Time-travel scrubbing bar**: bottom progress gauge with position indicator
+- **Vim count prefixes** (`3j`, `5k`, `42G`, etc.) on all navigation keys
+- **Mouse support**: click-to-select on timeline, scroll wheel navigation
+- **Tool usage statistics overlay** (`s`): per-tool use/result/error counts with error rate
+- **Session comparison** (`--diff`): cross-format text summary comparing tool usage and errors
+- **Non-interactive `--summary` mode** for scripts and CI
+- **Help overlay** (`?` / `F1`) with keybinding reference and color legend
+- **Panic-safe terminal cleanup** (Drop-guarded raw mode)
+- 112 unit tests, clippy-clean under strict and pedantic lint groups, `cargo audit` clean
 
 ### Not yet implemented
 
-- Branching / backtrack visualization (like rgx's PCRE2 debugger)
 - Heatmap mode showing hot tool-call regions
-- Time-travel scrubbing with a progress bar
-- Anthropic Agent SDK, Vercel AI SDK, LangChain, OpenAI Assistants and other non-CLI formats (Claude Code, Codex CLI, Gemini CLI are already supported — see Format support table above)
+- Anthropic Agent SDK, Vercel AI SDK, LangChain, OpenAI Assistants and other non-CLI agent trace formats
 - Live attach mode (watch an in-progress session)
-- Filter / search / jump-to-tool
-- Cost and latency annotations
 - Clipboard copy of step content
-- Structural diff between two sessions
 
 ## Why this exists
 
