@@ -1,4 +1,6 @@
-use crate::timeline::{Step, StepKind, ToolStats, compute_tool_stats, is_error_result, truncate};
+use crate::timeline::{
+    Step, StepKind, ToolStats, compute_tool_stats, format_duration_ms, is_error_result, truncate,
+};
 use anyhow::Result;
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseButton,
@@ -651,7 +653,17 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 .and_then(|orig| app.steps.get(orig))
                 .map_or_else(
                     || (String::new(), None),
-                    |s| (s.detail.clone(), Some(s.kind)),
+                    |s| {
+                        let mut text = s.detail.clone();
+                        if let Some(ms) = s.duration_ms {
+                            text = format!(
+                                "[{} since previous step]\n\n{}",
+                                format_duration_ms(ms),
+                                text
+                            );
+                        }
+                        (text, Some(s.kind))
+                    },
                 );
 
             let detail_title = match detail_kind {

@@ -1,5 +1,6 @@
 use crate::timeline::{
-    self, Step, assistant_text_step, pretty_json, tool_result_step, tool_use_step, user_text_step,
+    self, Step, assistant_text_step, compute_durations, parse_iso_ms, pretty_json,
+    tool_result_step, tool_use_step, user_text_step,
 };
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -8,6 +9,8 @@ use std::path::Path;
 
 #[derive(Debug, Deserialize)]
 struct Entry {
+    #[serde(default)]
+    timestamp: Option<String>,
     #[serde(rename = "type")]
     entry_type: String,
     #[serde(default)]
@@ -34,6 +37,8 @@ pub fn load(path: &Path) -> Result<Vec<Step>> {
             continue;
         }
         let payload_type = entry.payload.get("type").and_then(|t| t.as_str());
+        let ts = entry.timestamp.as_deref().and_then(parse_iso_ms);
+        let mut maybe_step: Option<Step> = None;
         match payload_type {
             Some("message") => {
                 let role = entry
@@ -42,14 +47,12 @@ pub fn load(path: &Path) -> Result<Vec<Step>> {
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
                 let text = extract_message_text(&entry.payload);
-                if text.trim().is_empty() {
-                    continue;
-                }
-                match role {
-                    "user" => steps.push(user_text_step(&text)),
-                    "assistant" => steps.push(assistant_text_step(&text)),
-                    // developer role = system-level permissions/policies, not useful in timeline
-                    _ => {}
+                if !text.trim().is_empty() {
+                    maybe_step = match role {
+                        "user" => Some(user_text_step(&text)),
+                        "assistant" => Some(assistant_text_step(&text)),
+                        _ => None,
+                    };
                 }
             }
             Some("function_call") => {
@@ -64,7 +67,7 @@ pub fn load(path: &Path) -> Result<Vec<Step>> {
                     .and_then(|v| v.as_str())
                     .unwrap_or("(unknown)");
                 let input_pretty = prettify_codex_arguments(&entry.payload);
-                steps.push(tool_use_step(call_id, name, &input_pretty));
+                maybe_step = Some(tool_use_step(call_id, name, &input_pretty));
             }
             Some("function_call_output") => {
                 let call_id = entry
@@ -78,17 +81,21 @@ pub fn load(path: &Path) -> Result<Vec<Step>> {
                     .and_then(|v| v.as_str())
                     .map_or_else(|| pretty_json(&entry.payload.get("output")), String::from);
                 let meta = tool_meta.get(call_id);
-                steps.push(tool_result_step(
+                maybe_step = Some(tool_result_step(
                     call_id,
                     &output,
                     meta.map(|m| m.name.as_str()),
                     meta.map(|m| m.input_pretty.as_str()),
                 ));
             }
-            // "reasoning" (internal thinking) and unknown payload types — skip
             _ => {}
         }
+        if let Some(mut step) = maybe_step {
+            step.timestamp_ms = ts;
+            steps.push(step);
+        }
     }
+    compute_durations(&mut steps);
     Ok(steps)
 }
 

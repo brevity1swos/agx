@@ -1,5 +1,6 @@
 use crate::timeline::{
-    Step, assistant_text_step, pretty_json, tool_result_step, tool_use_step, user_text_step,
+    Step, assistant_text_step, compute_durations, parse_iso_ms, pretty_json, tool_result_step,
+    tool_use_step, user_text_step,
 };
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -16,6 +17,8 @@ struct Message {
     #[serde(rename = "type")]
     msg_type: String,
     #[serde(default)]
+    timestamp: Option<String>,
+    #[serde(default)]
     content: serde_json::Value,
     #[serde(default, rename = "toolCalls")]
     tool_calls: Vec<ToolCall>,
@@ -27,6 +30,8 @@ struct ToolCall {
     id: String,
     #[serde(default)]
     name: String,
+    #[serde(default)]
+    timestamp: Option<String>,
     #[serde(default)]
     args: serde_json::Value,
     #[serde(default)]
@@ -41,34 +46,40 @@ pub fn load(path: &Path) -> Result<Vec<Step>> {
 
     let mut steps = Vec::new();
     for msg in &session.messages {
+        let msg_ts = msg.timestamp.as_deref().and_then(parse_iso_ms);
         match msg.msg_type.as_str() {
             "user" => {
                 let text = extract_message_text(&msg.content);
                 if !text.trim().is_empty() {
-                    steps.push(user_text_step(&text));
+                    let mut step = user_text_step(&text);
+                    step.timestamp_ms = msg_ts;
+                    steps.push(step);
                 }
             }
             "gemini" => {
                 let text = extract_message_text(&msg.content);
                 if !text.trim().is_empty() {
-                    steps.push(assistant_text_step(&text));
+                    let mut step = assistant_text_step(&text);
+                    step.timestamp_ms = msg_ts;
+                    steps.push(step);
                 }
                 for tc in &msg.tool_calls {
+                    let tc_ts = tc.timestamp.as_deref().and_then(parse_iso_ms).or(msg_ts);
                     let input_pretty = pretty_json(&tc.args);
-                    steps.push(tool_use_step(&tc.id, &tc.name, &input_pretty));
+                    let mut use_step = tool_use_step(&tc.id, &tc.name, &input_pretty);
+                    use_step.timestamp_ms = tc_ts;
+                    steps.push(use_step);
                     let result_text = extract_gemini_tool_result(&tc.result);
-                    steps.push(tool_result_step(
-                        &tc.id,
-                        &result_text,
-                        Some(&tc.name),
-                        Some(&input_pretty),
-                    ));
+                    let mut res_step =
+                        tool_result_step(&tc.id, &result_text, Some(&tc.name), Some(&input_pretty));
+                    res_step.timestamp_ms = tc_ts;
+                    steps.push(res_step);
                 }
             }
-            // "info" and unknown types (session end, cancellations, etc.) — skip
             _ => {}
         }
     }
+    compute_durations(&mut steps);
     Ok(steps)
 }
 

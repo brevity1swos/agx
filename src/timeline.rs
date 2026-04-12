@@ -12,6 +12,8 @@ pub struct Step {
     pub detail: String,
     pub kind: StepKind,
     pub tool_name: Option<String>,
+    pub timestamp_ms: Option<u64>,
+    pub duration_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,42 +148,60 @@ pub fn build(entries: &[Entry]) -> Vec<Step> {
     let mut steps = Vec::new();
     for entry in entries {
         match entry {
-            Entry::User(u) => match &u.message.content {
-                UserContent::Text(text) => steps.push(user_text_step(text)),
-                UserContent::Items(items) => {
-                    for item in items {
-                        match item {
-                            UserContentItem::Text { text } => steps.push(user_text_step(text)),
-                            UserContentItem::ToolResult {
-                                tool_use_id,
-                                content,
-                            } => {
-                                let result_text = match content {
-                                    ToolResultContent::Text(s) => s.clone(),
-                                    ToolResultContent::Items(v) => pretty_json(v),
-                                };
-                                let meta = tool_meta.get(tool_use_id);
-                                steps.push(tool_result_step(
+            Entry::User(u) => {
+                let ts = u.timestamp.as_deref().and_then(parse_iso_ms);
+                match &u.message.content {
+                    UserContent::Text(text) => {
+                        let mut step = user_text_step(text);
+                        step.timestamp_ms = ts;
+                        steps.push(step);
+                    }
+                    UserContent::Items(items) => {
+                        for item in items {
+                            match item {
+                                UserContentItem::Text { text } => {
+                                    let mut step = user_text_step(text);
+                                    step.timestamp_ms = ts;
+                                    steps.push(step);
+                                }
+                                UserContentItem::ToolResult {
                                     tool_use_id,
-                                    &result_text,
-                                    meta.map(|m| m.name.as_str()),
-                                    meta.map(|m| m.input_pretty.as_str()),
-                                ));
+                                    content,
+                                } => {
+                                    let result_text = match content {
+                                        ToolResultContent::Text(s) => s.clone(),
+                                        ToolResultContent::Items(v) => pretty_json(v),
+                                    };
+                                    let meta = tool_meta.get(tool_use_id);
+                                    let mut step = tool_result_step(
+                                        tool_use_id,
+                                        &result_text,
+                                        meta.map(|m| m.name.as_str()),
+                                        meta.map(|m| m.input_pretty.as_str()),
+                                    );
+                                    step.timestamp_ms = ts;
+                                    steps.push(step);
+                                }
+                                UserContentItem::Other => {}
                             }
-                            UserContentItem::Other => {}
                         }
                     }
                 }
-            },
+            }
             Entry::Assistant(a) => {
+                let ts = a.timestamp.as_deref().and_then(parse_iso_ms);
                 for item in &a.message.content {
                     match item {
                         AssistantContentItem::Text { text } => {
-                            steps.push(assistant_text_step(text));
+                            let mut step = assistant_text_step(text);
+                            step.timestamp_ms = ts;
+                            steps.push(step);
                         }
                         AssistantContentItem::ToolUse { id, name, input } => {
                             let input_pretty = pretty_json(input);
-                            steps.push(tool_use_step(id, name, &input_pretty));
+                            let mut step = tool_use_step(id, name, &input_pretty);
+                            step.timestamp_ms = ts;
+                            steps.push(step);
                         }
                         AssistantContentItem::Other => {}
                     }
@@ -190,6 +210,7 @@ pub fn build(entries: &[Entry]) -> Vec<Step> {
             Entry::Other => {}
         }
     }
+    compute_durations(&mut steps);
     steps
 }
 
@@ -199,6 +220,8 @@ pub(crate) fn user_text_step(text: &str) -> Step {
         detail: text.to_string(),
         kind: StepKind::UserText,
         tool_name: None,
+        timestamp_ms: None,
+        duration_ms: None,
     }
 }
 
@@ -208,6 +231,8 @@ pub(crate) fn assistant_text_step(text: &str) -> Step {
         detail: text.to_string(),
         kind: StepKind::AssistantText,
         tool_name: None,
+        timestamp_ms: None,
+        duration_ms: None,
     }
 }
 
@@ -217,6 +242,8 @@ pub(crate) fn tool_use_step(id: &str, name: &str, input_pretty: &str) -> Step {
         detail: format!("Tool: {name}\nID: {id}\n\nInput:\n{input_pretty}"),
         kind: StepKind::ToolUse,
         tool_name: Some(name.to_string()),
+        timestamp_ms: None,
+        duration_ms: None,
     }
 }
 
@@ -239,7 +266,87 @@ pub(crate) fn tool_result_step(
         detail: format!("Tool: {display_name}\nID: {id}\n\n{input_section}Result:\n{result}"),
         kind: StepKind::ToolResult,
         tool_name: tool_name.map(str::to_string),
+        timestamp_ms: None,
+        duration_ms: None,
     }
+}
+
+/// Compute sequential duration for each step (time since previous step).
+pub fn compute_durations(steps: &mut [Step]) {
+    for i in 1..steps.len() {
+        if let (Some(prev), Some(cur)) = (steps[i - 1].timestamp_ms, steps[i].timestamp_ms)
+            && cur >= prev
+        {
+            steps[i].duration_ms = Some(cur - prev);
+        }
+    }
+}
+
+/// Format a duration in ms to a compact human-readable string.
+pub(crate) fn format_duration_ms(ms: u64) -> String {
+    if ms < 1_000 {
+        format!("{ms}ms")
+    } else if ms < 60_000 {
+        format!("{:.1}s", ms as f64 / 1_000.0)
+    } else {
+        format!("{:.1}min", ms as f64 / 60_000.0)
+    }
+}
+
+/// Parse ISO 8601 UTC timestamp to unix milliseconds. Handles
+/// `YYYY-MM-DDTHH:MM:SS[.fff][Z]` — the format all three CLIs produce.
+pub(crate) fn parse_iso_ms(s: &str) -> Option<u64> {
+    if s.len() < 19 {
+        return None;
+    }
+    let y: i64 = s.get(0..4)?.parse().ok()?;
+    let mo: u64 = s.get(5..7)?.parse().ok()?;
+    let d: u64 = s.get(8..10)?.parse().ok()?;
+    let h: u64 = s.get(11..13)?.parse().ok()?;
+    let mi: u64 = s.get(14..16)?.parse().ok()?;
+    let se: u64 = s.get(17..19)?.parse().ok()?;
+
+    // Howard Hinnant's days_from_civil
+    let (adj_y, adj_m) = if mo <= 2 {
+        (y - 1, mo + 9)
+    } else {
+        (y, mo - 3)
+    };
+    let era = if adj_y >= 0 { adj_y } else { adj_y - 399 } / 400;
+    let yoe = (adj_y - era * 400) as u64;
+    let doy = (153 * adj_m + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = (era * 146_097 + doe as i64 - 719_468) as u64;
+
+    let secs = days * 86_400 + h * 3_600 + mi * 60 + se;
+
+    // Fractional ms after the seconds
+    let bytes = s.as_bytes();
+    let ms = if bytes.len() > 19 && bytes[19] == b'.' {
+        let end = bytes[20..]
+            .iter()
+            .position(|c| !c.is_ascii_digit())
+            .map_or(bytes.len(), |p| 20 + p);
+        let frac = s.get(20..end)?;
+        if frac.is_empty() {
+            0
+        } else {
+            let mut val: u64 = frac.parse().ok()?;
+            match frac.len() {
+                1 => val *= 100,
+                2 => val *= 10,
+                3 => {}
+                n => {
+                    val /= 10u64.pow(u32::try_from(n - 3).unwrap_or(0));
+                }
+            }
+            val
+        }
+    } else {
+        0
+    };
+
+    Some(secs * 1_000 + ms)
 }
 
 fn collect_tool_meta(entries: &[Entry]) -> HashMap<String, ToolMeta> {
