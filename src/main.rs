@@ -8,7 +8,8 @@ mod timeline;
 mod tui;
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{CommandFactory, Parser};
+use clap_complete::{Shell, generate};
 use format::Format;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -36,6 +37,10 @@ struct Cli {
     /// Live mode: watch for file changes and auto-refresh
     #[arg(long)]
     live: bool,
+
+    /// Generate shell completions and print to stdout
+    #[arg(long, value_name = "SHELL")]
+    completions: Option<Shell>,
 }
 
 fn load_session(path: &Path) -> Result<Vec<Step>> {
@@ -124,6 +129,13 @@ fn print_diff(path_a: &Path, steps_a: &[Step], path_b: &Path, steps_b: &[Step]) 
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    if let Some(shell) = cli.completions {
+        let mut cmd = Cli::command();
+        generate(shell, &mut cmd, "agx", &mut std::io::stdout());
+        return Ok(());
+    }
+
     let session_path = if let Some(p) = cli.session {
         p
     } else if cli.diff.is_some() {
