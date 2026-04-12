@@ -12,7 +12,7 @@ struct Entry {
     #[serde(default)]
     timestamp: Option<String>,
     #[serde(rename = "type")]
-    entry_type: String,
+    kind: String,
     #[serde(default)]
     payload: serde_json::Value,
 }
@@ -33,7 +33,7 @@ pub fn load(path: &Path) -> Result<Vec<Step>> {
     let tool_meta = collect_tool_meta(&entries);
     let mut steps = Vec::new();
     for entry in &entries {
-        if entry.entry_type != "response_item" {
+        if entry.kind != "response_item" {
             continue;
         }
         let payload_type = entry.payload.get("type").and_then(|t| t.as_str());
@@ -108,7 +108,7 @@ struct ToolMeta {
 fn collect_tool_meta(entries: &[Entry]) -> HashMap<String, ToolMeta> {
     let mut map = HashMap::new();
     for entry in entries {
-        if entry.entry_type != "response_item" {
+        if entry.kind != "response_item" {
             continue;
         }
         if entry.payload.get("type").and_then(|t| t.as_str()) != Some("function_call") {

@@ -283,6 +283,7 @@ pub fn compute_durations(steps: &mut [Step]) {
 }
 
 /// Format a duration in ms to a compact human-readable string.
+#[allow(clippy::cast_precision_loss)]
 pub(crate) fn format_duration_ms(ms: u64) -> String {
     if ms < 1_000 {
         format!("{ms}ms")
@@ -295,6 +296,11 @@ pub(crate) fn format_duration_ms(ms: u64) -> String {
 
 /// Parse ISO 8601 UTC timestamp to unix milliseconds. Handles
 /// `YYYY-MM-DDTHH:MM:SS[.fff][Z]` — the format all three CLIs produce.
+#[allow(
+    clippy::many_single_char_names,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
 pub(crate) fn parse_iso_ms(s: &str) -> Option<u64> {
     if s.len() < 19 {
         return None;
