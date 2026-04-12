@@ -19,7 +19,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Wrap};
 use std::collections::HashMap;
 use std::io;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 const PAGE_STEP: usize = 10;
 const HELP_POPUP_WIDTH: u16 = 64;
@@ -38,6 +38,7 @@ enum PendingKey {
     JumpMark,
 }
 
+#[allow(clippy::struct_excessive_bools)]
 pub struct App {
     steps: Vec<Step>,
     list_state: ListState,
@@ -588,7 +589,7 @@ impl Drop for TerminalGuard {
     }
 }
 
-pub fn run(steps: Vec<Step>, reload_fn: Option<Box<dyn Fn() -> Result<Vec<Step>>>>) -> Result<()> {
+pub fn run(steps: Vec<Step>, reload_fn: Option<&dyn Fn() -> Result<Vec<Step>>>) -> Result<()> {
     enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
     let _guard = TerminalGuard;
@@ -596,9 +597,8 @@ pub fn run(steps: Vec<Step>, reload_fn: Option<Box<dyn Fn() -> Result<Vec<Step>>
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
     let mut app = App::new(steps);
-    let mut last_mtime: Option<SystemTime> = None;
 
-    let result = run_loop(&mut terminal, &mut app, &reload_fn, &mut last_mtime);
+    let result = run_loop(&mut terminal, &mut app, reload_fn);
     let _ = terminal.show_cursor();
     result
 }
@@ -609,20 +609,15 @@ pub fn run(steps: Vec<Step>, reload_fn: Option<Box<dyn Fn() -> Result<Vec<Step>>
 fn run_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
-    reload_fn: &Option<Box<dyn Fn() -> Result<Vec<Step>>>>,
-    last_mtime: &mut Option<SystemTime>,
+    reload_fn: Option<&dyn Fn() -> Result<Vec<Step>>>,
 ) -> Result<()> {
     loop {
-        // Live reload: poll file mtime and refresh if changed.
-        if let Some(reload) = reload_fn {
-            if let Ok(new_steps) = reload() {
-                let new_len = new_steps.len();
-                let old_len = app.steps.len();
-                if new_len != old_len {
-                    app.reload_steps(new_steps);
-                }
-            }
-            let _ = last_mtime; // suppress unused warning; mtime tracked via step count
+        // Live reload: poll file and refresh if step count changed.
+        if let Some(reload) = reload_fn
+            && let Ok(new_steps) = reload()
+            && new_steps.len() != app.steps.len()
+        {
+            app.reload_steps(new_steps);
         }
 
         terminal.draw(|f| {

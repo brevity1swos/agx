@@ -78,9 +78,7 @@ pub fn load(path: &Path) -> Result<Vec<Step>> {
                     meta.map(|m| m.input_pretty.as_str()),
                 ));
             }
-            "system" => {
-                // System prompts — skip (they're instructions, not conversation)
-            }
+            // System prompts and unknown roles — skip
             _ => {}
         }
     }

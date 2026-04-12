@@ -171,6 +171,6 @@ fn main() -> Result<()> {
     } else {
         None
     };
-    tui::run(steps, reload_fn)?;
+    tui::run(steps, reload_fn.as_deref())?;
     Ok(())
 }
