@@ -34,10 +34,10 @@ Make agx powerful enough before the public release that cloning it is unambiguou
 | 5 | Content search (`/pattern`) | ✅ done | Commit `ef1dd11`. `/` to search label + detail, `n`/`N` to navigate matches with wrap, distinct highlight bg. |
 | 6 | Bookmarks | ✅ done | Commit `95addb0`. `m<char>` sets, `'<char>` jumps. Stored by original step index, survives filter cycles, reports hidden-by-filter. |
 | 7 | Mouse support | ✅ done | Click-to-select on timeline rows, scroll-wheel prev/next. |
-| 11 | Vim mode (`--vim`) | planned | Normal/Insert, hjkl/w/b/e, `:` commands, `/` search |
+| 11 | Vim mode count prefixes | ✅ done | `3j`, `5k`, `2d`, `42G`, etc. — all existing navigation keys accept a numeric count prefix. hjkl/gG/`/` etc. already worked as vim keys; count completes the vim feel. No `--vim` flag needed since there's no Insert/Normal distinction in a read-only debugger. |
 | 12 | Multi-session browser | planned | No args → interactive picker across Claude / Codex / Gemini recent sessions |
 
-**Progress: 10/12 features done** (~5.5 days of work). Remaining: 2 features, ~2 days. Phase 1 debugger depth complete.
+**Progress: 11/12 features done** (~6 days of work). Remaining: 1 feature, ~1 day.
 
 ## Build order (dependency-sorted)
 

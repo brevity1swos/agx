@@ -52,6 +52,7 @@ pub struct App {
     conversation_indices: Vec<usize>,
     conversation_list_state: ListState,
     three_pane: bool,
+    count_buffer: String,
 }
 
 impl App {
@@ -86,9 +87,30 @@ impl App {
             conversation_indices,
             conversation_list_state,
             three_pane: true,
+            count_buffer: String::new(),
         };
         app.sync_conversation_cursor();
         app
+    }
+
+    fn append_count_digit(&mut self, c: char) {
+        if c.is_ascii_digit() && self.count_buffer.len() < 6 {
+            self.count_buffer.push(c);
+        }
+    }
+
+    fn take_count(&mut self) -> usize {
+        let n = self.count_buffer.parse::<usize>().unwrap_or(1).max(1);
+        self.count_buffer.clear();
+        n
+    }
+
+    fn has_count(&self) -> bool {
+        !self.count_buffer.is_empty()
+    }
+
+    fn clear_count(&mut self) {
+        self.count_buffer.clear();
     }
 
     fn sync_conversation_cursor(&mut self) {
@@ -730,6 +752,9 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                             if let Some(q) = &app.search {
                                 parts.push(format!("search: {q} ({})", app.search_matches.len()));
                             }
+                            if !app.count_buffer.is_empty() {
+                                parts.push(format!("×{}", app.count_buffer));
+                            }
                             let label = parts.join("  ");
                             let gauge = Gauge::default()
                                 .gauge_style(
@@ -764,6 +789,7 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                     Line::from("  Home / g        first step"),
                     Line::from("  End  / G        last step"),
                     Line::from("  :N              jump to visible row N"),
+                    Line::from("  <N><motion>     vim count prefix (3j, 5k, 2d, 42G, ...)"),
                     Line::from(""),
                     Line::from(Span::styled(
                         "Filter",
@@ -945,24 +971,92 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
 
             // Normal mode.
             app.status_msg = None;
+
+            // Vim-style count prefix: digits 1-9 always start a count; 0 joins
+            // an existing count (otherwise it's just an unbound key).
+            if let KeyCode::Char(c @ '0'..='9') = key.code
+                && (c != '0' || app.has_count())
+            {
+                app.append_count_digit(c);
+                continue;
+            }
+
             match key.code {
                 KeyCode::Char('q') | KeyCode::Esc => break,
-                KeyCode::Char('?') | KeyCode::F(1) => app.toggle_help(),
-                KeyCode::Char(':') => app.enter_command_mode(),
-                KeyCode::Char('f') => app.enter_filter_mode(),
-                KeyCode::Char('/') => app.enter_search_mode(),
-                KeyCode::Char('n') => app.next_match(),
-                KeyCode::Char('N') => app.prev_match(),
-                KeyCode::Char('m') => app.begin_set_mark(),
-                KeyCode::Char('\'') => app.begin_jump_mark(),
-                KeyCode::Tab => app.toggle_layout(),
-                KeyCode::Down | KeyCode::Char('j') => app.next(),
-                KeyCode::Up | KeyCode::Char('k') => app.prev(),
-                KeyCode::PageDown | KeyCode::Char('d') => app.page_down(PAGE_STEP),
-                KeyCode::PageUp | KeyCode::Char('u') => app.page_up(PAGE_STEP),
-                KeyCode::Home | KeyCode::Char('g') => app.home(),
-                KeyCode::End | KeyCode::Char('G') => app.end(),
-                _ => {}
+                KeyCode::Char('?') | KeyCode::F(1) => {
+                    app.clear_count();
+                    app.toggle_help();
+                }
+                KeyCode::Char(':') => {
+                    app.clear_count();
+                    app.enter_command_mode();
+                }
+                KeyCode::Char('f') => {
+                    app.clear_count();
+                    app.enter_filter_mode();
+                }
+                KeyCode::Char('/') => {
+                    app.clear_count();
+                    app.enter_search_mode();
+                }
+                KeyCode::Char('n') => {
+                    let n = app.take_count();
+                    for _ in 0..n {
+                        app.next_match();
+                    }
+                }
+                KeyCode::Char('N') => {
+                    let n = app.take_count();
+                    for _ in 0..n {
+                        app.prev_match();
+                    }
+                }
+                KeyCode::Char('m') => {
+                    app.clear_count();
+                    app.begin_set_mark();
+                }
+                KeyCode::Char('\'') => {
+                    app.clear_count();
+                    app.begin_jump_mark();
+                }
+                KeyCode::Tab => {
+                    app.clear_count();
+                    app.toggle_layout();
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    let n = app.take_count();
+                    for _ in 0..n {
+                        app.next();
+                    }
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    let n = app.take_count();
+                    for _ in 0..n {
+                        app.prev();
+                    }
+                }
+                KeyCode::PageDown | KeyCode::Char('d') => {
+                    let n = app.take_count();
+                    app.page_down(PAGE_STEP * n);
+                }
+                KeyCode::PageUp | KeyCode::Char('u') => {
+                    let n = app.take_count();
+                    app.page_up(PAGE_STEP * n);
+                }
+                KeyCode::Home | KeyCode::Char('g') => {
+                    app.clear_count();
+                    app.home();
+                }
+                KeyCode::End | KeyCode::Char('G') => {
+                    // 5G in vim = jump to line 5; plain G = last line.
+                    if app.has_count() {
+                        let n = app.take_count();
+                        app.goto_step(n);
+                    } else {
+                        app.end();
+                    }
+                }
+                _ => app.clear_count(),
             }
         }
     }
@@ -1470,5 +1564,77 @@ mod tests {
     fn batch_flags_empty_for_no_steps() {
         let flags = compute_batch_flags(&[]);
         assert!(flags.is_empty());
+    }
+
+    #[test]
+    fn count_buffer_accumulates_digits() {
+        let mut app = App::new(sample_steps());
+        app.append_count_digit('1');
+        app.append_count_digit('2');
+        app.append_count_digit('3');
+        assert_eq!(app.count_buffer, "123");
+    }
+
+    #[test]
+    fn count_buffer_rejects_non_digits() {
+        let mut app = App::new(sample_steps());
+        app.append_count_digit('a');
+        assert_eq!(app.count_buffer, "");
+    }
+
+    #[test]
+    fn count_buffer_caps_length() {
+        let mut app = App::new(sample_steps());
+        for _ in 0..10 {
+            app.append_count_digit('9');
+        }
+        assert_eq!(app.count_buffer.len(), 6);
+    }
+
+    #[test]
+    fn take_count_returns_one_when_empty() {
+        let mut app = App::new(sample_steps());
+        assert_eq!(app.take_count(), 1);
+    }
+
+    #[test]
+    fn take_count_parses_and_clears() {
+        let mut app = App::new(sample_steps());
+        app.append_count_digit('3');
+        app.append_count_digit('7');
+        assert_eq!(app.take_count(), 37);
+        assert!(app.count_buffer.is_empty());
+    }
+
+    #[test]
+    fn take_count_never_returns_zero() {
+        let mut app = App::new(sample_steps());
+        app.append_count_digit('0');
+        // count_buffer == "0" → parses as 0 → clamped to 1
+        assert_eq!(app.take_count(), 1);
+    }
+
+    #[test]
+    fn has_count_reflects_buffer_state() {
+        let mut app = App::new(sample_steps());
+        assert!(!app.has_count());
+        app.append_count_digit('5');
+        assert!(app.has_count());
+        app.take_count();
+        assert!(!app.has_count());
+    }
+
+    #[test]
+    fn count_prefix_multiplies_next_navigation() {
+        // Simulate the runtime loop behavior: after digits are collected,
+        // next() should be called take_count() times.
+        let mut app = App::new(sample_steps());
+        app.list_state.select(Some(0));
+        app.append_count_digit('3');
+        let n = app.take_count();
+        for _ in 0..n {
+            app.next();
+        }
+        assert_eq!(app.list_state.selected(), Some(3));
     }
 }
