@@ -130,12 +130,10 @@ Everything below works end-to-end on real sessions from all three supported CLIs
 - **Panic-safe terminal cleanup** (Drop-guarded raw mode)
 - 112 unit tests, clippy-clean under strict and pedantic lint groups, `cargo audit` clean
 
-### Not yet implemented
-
-- Heatmap mode showing hot tool-call regions
-- Anthropic Agent SDK, Vercel AI SDK, LangChain, OpenAI Assistants and other non-CLI agent trace formats
-- Live attach mode (watch an in-progress session)
-- Clipboard copy of step content
+- **Heatmap mode** (`h`): color-codes timeline by tool-call density — warm colors for hot regions, cool for sparse
+- **Clipboard copy** (`y`): copies current step detail to system clipboard
+- **Live attach** (`--live`): watches session file for changes and auto-refreshes the TUI every 500ms
+- **Generic conversation format**: OpenAI-compatible `{messages: [{role, content, tool_calls}]}` — covers Anthropic SDK, Vercel AI SDK, LangChain, OpenAI Assistants exports
 
 ## Why this exists
 
