@@ -4,9 +4,31 @@
 
 Step through and debug AI agent traces without leaving your terminal. Written in Rust.
 
+![demo](assets/demo.gif)
+
 A terminal-native TUI that turns AI agent session files into a navigable timeline of user turns, assistant turns, tool calls, and tool results — with the original call input and the response visible on a single screen.
 
 Inspired by [rgx](https://github.com/brevity1swos/rgx) — same dual-cursor / heatmap / time-travel approach that rgx applies to regex matching, applied here to agent execution.
+
+## Install
+
+### From source (recommended)
+
+```bash
+git clone https://github.com/brevity1swos/agx.git
+cd agx
+cargo install --path .
+```
+
+Requires Rust 1.74+ (edition 2024).
+
+### Shell completions
+
+```bash
+agx --completions bash >> ~/.bashrc    # Bash
+agx --completions zsh >> ~/.zshrc      # Zsh
+agx --completions fish > ~/.config/fish/completions/agx.fish  # Fish
+```
 
 ## What it shows
 
@@ -38,17 +60,24 @@ To add a new format, see CLAUDE.md's "Support a new agent trace format" common t
 ## Try it
 
 ```bash
-git clone https://github.com/brevity1swos/agx.git
-cd agx
-cargo build --release
+# Try the built-in sample fixtures (all formats auto-detected)
+agx assets/sample_session.jsonl          # Claude Code
+agx assets/sample_codex_session.jsonl    # Codex CLI
+agx assets/sample_gemini_session.json    # Gemini CLI
+agx assets/sample_generic_session.json   # OpenAI-compatible
 
-# Pick one — all three work, format auto-detected
-./target/release/agx assets/sample_session.jsonl          # Claude Code format
-./target/release/agx assets/sample_codex_session.jsonl    # Codex CLI format
-./target/release/agx assets/sample_gemini_session.json    # Gemini CLI format
+# Or browse your recent sessions (no args)
+agx
+
+# Watch a live session as it's being written
+agx --live ~/.claude/projects/<project>/<session>.jsonl
+
+# Compare two sessions
+agx session_a.jsonl --diff session_b.jsonl
+
+# Non-interactive summary for scripts
+agx --summary <session>
 ```
-
-Each fixture is a synthetic Fibonacci-writing conversation in its native schema — zero personal data, exercises every entry type the parser handles. Requires Rust 1.74+ (edition 2024).
 
 ## Use on your own sessions
 
