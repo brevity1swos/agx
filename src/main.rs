@@ -1,6 +1,7 @@
 mod browser;
 mod codex;
 mod debug_unknowns;
+mod export;
 mod format;
 mod gemini;
 mod generic;
@@ -10,12 +11,19 @@ mod timeline;
 mod tui;
 
 use anyhow::Result;
-use clap::{CommandFactory, Parser};
+use clap::{CommandFactory, Parser, ValueEnum};
 use clap_complete::{Shell, generate};
 use format::Format;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use timeline::{Step, compute_session_totals, compute_tool_stats, count_from_steps};
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+enum ExportFormat {
+    Md,
+    Html,
+    Json,
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "agx", version, about = "Step-through debugger for your agent")]
@@ -44,6 +52,17 @@ struct Cli {
     /// and print a report to stderr. Useful for diagnosing format drift.
     #[arg(long)]
     debug_unknowns: bool,
+
+    /// Suppress cost estimates in --summary, stats overlay, and TUI status
+    /// bar. Token counts are still shown. Use when working with unpriced
+    /// custom models or when cost estimates are noise.
+    #[arg(long)]
+    no_cost: bool,
+
+    /// Export the session to stdout in the given format instead of
+    /// launching the TUI. Mutually exclusive with --summary.
+    #[arg(long, value_enum, value_name = "FORMAT")]
+    export: Option<ExportFormat>,
 }
 
 fn load_session(path: &Path) -> Result<Vec<Step>> {
@@ -167,6 +186,17 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    if let Some(fmt) = cli.export {
+        let totals = compute_session_totals(&steps);
+        let out = match fmt {
+            ExportFormat::Json => export::json(&steps, &totals)?,
+            ExportFormat::Md => export::markdown(&steps, &totals, cli.no_cost),
+            ExportFormat::Html => export::html(&steps, &totals, cli.no_cost),
+        };
+        print!("{out}");
+        return Ok(());
+    }
+
     if cli.summary {
         let fmt = format::detect(&session_path)?;
         let counts = count_from_steps(&steps);
@@ -189,12 +219,14 @@ fn main() -> Result<()> {
         if !totals.unique_models.is_empty() {
             println!("  models: {}", totals.unique_models.join(", "));
         }
-        match totals.cost_usd {
-            Some(c) => println!("  estimated cost: ${c:.4} USD"),
-            None if totals.has_tokens() => {
-                println!("  estimated cost: (unknown — no pricing entry for model)")
+        if !cli.no_cost {
+            match totals.cost_usd {
+                Some(c) => println!("  estimated cost: ${c:.4} USD"),
+                None if totals.has_tokens() => {
+                    println!("  estimated cost: (unknown — no pricing entry for model)")
+                }
+                None => {}
             }
-            None => {}
         }
         println!("First 20:");
         for (i, step) in steps.iter().take(20).enumerate() {
@@ -209,6 +241,6 @@ fn main() -> Result<()> {
     } else {
         None
     };
-    tui::run(steps, reload_fn.as_deref())?;
+    tui::run(steps, reload_fn.as_deref(), cli.no_cost)?;
     Ok(())
 }

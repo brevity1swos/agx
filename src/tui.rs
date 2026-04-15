@@ -1,5 +1,6 @@
 use crate::timeline::{
-    Step, StepKind, ToolStats, compute_tool_stats, format_duration_ms, is_error_result, truncate,
+    SessionTotals, Step, StepKind, ToolStats, compute_session_totals, compute_tool_stats,
+    format_duration_ms, is_error_result, truncate,
 };
 use anyhow::Result;
 use arboard::Clipboard;
@@ -62,10 +63,14 @@ pub struct App {
     heatmap: Vec<u8>,
     show_heatmap: bool,
     show_stats: bool,
+    /// When true, suppress cost estimates in status bar, detail pane, and
+    /// stats overlay. Token counts are still shown. Set via `--no-cost`.
+    no_cost: bool,
+    session_totals: SessionTotals,
 }
 
 impl App {
-    pub fn new(steps: Vec<Step>) -> Self {
+    pub fn new(steps: Vec<Step>, no_cost: bool) -> Self {
         let mut list_state = ListState::default();
         if !steps.is_empty() {
             list_state.select(Some(0));
@@ -101,9 +106,12 @@ impl App {
             heatmap: Vec::new(),
             show_heatmap: false,
             show_stats: false,
+            no_cost,
+            session_totals: SessionTotals::default(),
         };
         app.tool_stats = compute_tool_stats(&app.steps);
         app.heatmap = compute_heatmap(&app.steps);
+        app.session_totals = compute_session_totals(&app.steps);
         app.sync_conversation_cursor();
         app
     }
@@ -120,6 +128,7 @@ impl App {
         self.heatmap = compute_heatmap(&self.steps);
         self.conversation_indices = compute_conversation_indices(&self.steps);
         self.tool_stats = compute_tool_stats(&self.steps);
+        self.session_totals = compute_session_totals(&self.steps);
         self.filter = None;
         self.search = None;
         self.search_matches.clear();
@@ -589,14 +598,18 @@ impl Drop for TerminalGuard {
     }
 }
 
-pub fn run(steps: Vec<Step>, reload_fn: Option<&dyn Fn() -> Result<Vec<Step>>>) -> Result<()> {
+pub fn run(
+    steps: Vec<Step>,
+    reload_fn: Option<&dyn Fn() -> Result<Vec<Step>>>,
+    no_cost: bool,
+) -> Result<()> {
     enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
     let _guard = TerminalGuard;
 
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
-    let mut app = App::new(steps);
+    let mut app = App::new(steps, no_cost);
 
     let result = run_loop(&mut terminal, &mut app, reload_fn);
     let _ = terminal.show_cursor();
@@ -760,12 +773,39 @@ fn run_loop(
                     || (String::new(), None),
                     |s| {
                         let mut text = s.detail.clone();
+                        // Prepend a metadata block when this step carries
+                        // duration / model / usage. Skipped entirely when
+                        // none of those are known.
+                        let mut meta: Vec<String> = Vec::new();
                         if let Some(ms) = s.duration_ms {
-                            text = format!(
-                                "[{} since previous step]\n\n{}",
-                                format_duration_ms(ms),
-                                text
-                            );
+                            meta.push(format!("[{} since previous step]", format_duration_ms(ms)));
+                        }
+                        if let Some(m) = &s.model {
+                            meta.push(format!("[model: {m}]"));
+                        }
+                        let has_tokens = s.tokens_in.is_some()
+                            || s.tokens_out.is_some()
+                            || s.cache_read.is_some()
+                            || s.cache_create.is_some();
+                        if has_tokens {
+                            let parts: Vec<String> = [
+                                ("in", s.tokens_in),
+                                ("out", s.tokens_out),
+                                ("cache_read", s.cache_read),
+                                ("cache_create", s.cache_create),
+                            ]
+                            .iter()
+                            .filter_map(|(label, v)| v.map(|n| format!("{label}: {n}")))
+                            .collect();
+                            meta.push(format!("[tokens — {}]", parts.join(", ")));
+                        }
+                        if !app.no_cost
+                            && let Some(c) = s.cost_usd()
+                        {
+                            meta.push(format!("[estimated cost: ${c:.4} USD]"));
+                        }
+                        if !meta.is_empty() {
+                            text = format!("{}\n\n{}", meta.join("\n"), text);
                         }
                         (text, Some(s.kind))
                     },
@@ -880,6 +920,11 @@ fn run_loop(
                             }
                             if !app.count_buffer.is_empty() {
                                 parts.push(format!("×{}", app.count_buffer));
+                            }
+                            if !app.no_cost
+                                && let Some(c) = app.session_totals.cost_usd
+                            {
+                                parts.push(format!("cost: ${c:.4}"));
                             }
                             let label = parts.join("  ");
                             let gauge = Gauge::default()
@@ -1025,6 +1070,34 @@ fn run_loop(
                         app.steps.len(),
                         app.tool_stats.len()
                     )),
+                ];
+                if app.session_totals.has_tokens() {
+                    lines.push(Line::from(format!(
+                        "Tokens — in: {}, out: {}, cache_read: {}, cache_create: {}",
+                        app.session_totals.tokens_in,
+                        app.session_totals.tokens_out,
+                        app.session_totals.cache_read,
+                        app.session_totals.cache_create,
+                    )));
+                    if !app.session_totals.unique_models.is_empty() {
+                        lines.push(Line::from(format!(
+                            "Models: {}",
+                            app.session_totals.unique_models.join(", ")
+                        )));
+                    }
+                    if !app.no_cost {
+                        match app.session_totals.cost_usd {
+                            Some(c) => {
+                                lines.push(Line::from(format!("Estimated cost: ${c:.4} USD")))
+                            }
+                            None => lines.push(Line::from(Span::styled(
+                                "Estimated cost: (no pricing entry for model)",
+                                Style::default().fg(Color::DarkGray),
+                            ))),
+                        }
+                    }
+                }
+                lines.extend([
                     Line::from(""),
                     Line::from(Span::styled(
                         format!(
@@ -1033,7 +1106,7 @@ fn run_loop(
                         ),
                         Style::default().add_modifier(Modifier::BOLD),
                     )),
-                ];
+                ]);
                 for s in app.tool_stats.iter().take(18) {
                     let err_pct = match s.error_rate() {
                         Some(r) => format!("{:>7.1}%", r * 100.0),
@@ -1339,21 +1412,21 @@ mod tests {
 
     #[test]
     fn goto_step_selects_valid_index() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.goto_step(2);
         assert_eq!(app.list_state.selected(), Some(1));
     }
 
     #[test]
     fn goto_step_clamps_out_of_bounds() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.goto_step(999);
         assert_eq!(app.list_state.selected(), Some(5));
     }
 
     #[test]
     fn goto_step_rejects_zero() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.list_state.select(Some(0));
         app.goto_step(0);
         assert_eq!(app.list_state.selected(), Some(0));
@@ -1362,14 +1435,14 @@ mod tests {
 
     #[test]
     fn execute_command_parses_number() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.execute_command("3");
         assert_eq!(app.list_state.selected(), Some(2));
     }
 
     #[test]
     fn execute_command_ignores_empty_input() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.list_state.select(Some(0));
         app.execute_command("   ");
         assert_eq!(app.list_state.selected(), Some(0));
@@ -1378,14 +1451,14 @@ mod tests {
 
     #[test]
     fn execute_command_reports_unknown() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.execute_command("nope");
         assert!(app.status_msg.as_ref().unwrap().contains("unknown"));
     }
 
     #[test]
     fn apply_filter_by_tool_name_substring_case_insensitive() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.apply_filter("read");
         assert_eq!(app.visible_count(), 2);
         assert_eq!(app.filter.as_deref(), Some("read"));
@@ -1394,14 +1467,14 @@ mod tests {
 
     #[test]
     fn apply_filter_by_kind_prefix() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.apply_filter("[tool]");
         assert_eq!(app.visible_count(), 2);
     }
 
     #[test]
     fn apply_filter_empty_clears_existing_filter() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.apply_filter("Read");
         assert_eq!(app.visible_count(), 2);
         app.apply_filter("");
@@ -1411,7 +1484,7 @@ mod tests {
 
     #[test]
     fn apply_filter_no_matches_keeps_previous_view_and_sets_error() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.apply_filter("nonexistent");
         assert_eq!(app.visible_count(), 6);
         assert!(app.filter.is_none());
@@ -1420,7 +1493,7 @@ mod tests {
 
     #[test]
     fn clear_filter_restores_full_view() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.apply_filter("Read");
         app.clear_filter();
         assert_eq!(app.visible_count(), 6);
@@ -1430,7 +1503,7 @@ mod tests {
 
     #[test]
     fn navigation_under_filter_operates_on_filtered_view() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.apply_filter("[tool]");
         assert_eq!(app.visible_count(), 2);
         assert_eq!(app.list_state.selected(), Some(0));
@@ -1446,7 +1519,7 @@ mod tests {
 
     #[test]
     fn goto_step_under_filter_uses_visible_positions() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.apply_filter("[tool]");
         app.goto_step(2);
         assert_eq!(app.list_state.selected(), Some(1));
@@ -1454,7 +1527,7 @@ mod tests {
 
     #[test]
     fn apply_search_finds_matches_in_label_and_detail() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.apply_search("fib");
         // "fibonacci" in user text + "fib(n)" in Read result = 2 matches
         assert_eq!(app.search_matches.len(), 2);
@@ -1463,14 +1536,14 @@ mod tests {
 
     #[test]
     fn apply_search_case_insensitive() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.apply_search("FIBONACCI");
         assert_eq!(app.search_matches.len(), 1);
     }
 
     #[test]
     fn apply_search_jumps_to_first_match_at_or_after_current() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.list_state.select(Some(2));
         app.apply_search("fib");
         // Current is step 2 (tool_use Read). Matches: step 0 (user text) and step 2 (Read result).
@@ -1480,7 +1553,7 @@ mod tests {
 
     #[test]
     fn apply_search_empty_clears() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.apply_search("fib");
         assert!(!app.search_matches.is_empty());
         app.apply_search("");
@@ -1490,7 +1563,7 @@ mod tests {
 
     #[test]
     fn apply_search_no_matches_sets_error() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.apply_search("zzzzz");
         assert!(app.search.is_none());
         assert!(app.search_matches.is_empty());
@@ -1499,7 +1572,7 @@ mod tests {
 
     #[test]
     fn next_match_advances_and_wraps() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.list_state.select(Some(0));
         app.apply_search("fib"); // matches 0 and 2
         assert_eq!(app.list_state.selected(), Some(0));
@@ -1511,7 +1584,7 @@ mod tests {
 
     #[test]
     fn prev_match_goes_back_and_wraps() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.list_state.select(Some(0));
         app.apply_search("fib");
         assert_eq!(app.list_state.selected(), Some(0));
@@ -1523,7 +1596,7 @@ mod tests {
 
     #[test]
     fn search_respects_active_filter() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.apply_filter("[tool]"); // leaves only steps 1 and 3 in filtered_view
         app.apply_search("Read"); // should find step 1 (Read tool_use), position 0 in filtered_view
         assert_eq!(app.search_matches.len(), 1);
@@ -1532,7 +1605,7 @@ mod tests {
 
     #[test]
     fn clear_search_removes_highlights() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.apply_search("fib");
         assert!(!app.search_matches.is_empty());
         app.clear_search();
@@ -1542,7 +1615,7 @@ mod tests {
 
     #[test]
     fn search_matches_recompute_when_filter_changes() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.apply_search("fib"); // matches 2 steps in unfiltered view
         assert_eq!(app.search_matches.len(), 2);
         app.apply_filter("[tool]"); // filtered_view is now just the 2 tool steps
@@ -1554,7 +1627,7 @@ mod tests {
 
     #[test]
     fn set_mark_stores_current_step_by_char() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.list_state.select(Some(3));
         app.set_mark('a');
         assert_eq!(app.bookmarks.get(&'a').copied(), Some(3));
@@ -1563,7 +1636,7 @@ mod tests {
 
     #[test]
     fn jump_to_mark_restores_position() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.list_state.select(Some(2));
         app.set_mark('x');
         app.list_state.select(Some(0));
@@ -1573,14 +1646,14 @@ mod tests {
 
     #[test]
     fn jump_to_mark_unknown_char_sets_error() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.jump_to_mark('z');
         assert!(app.status_msg.as_ref().unwrap().contains("no bookmark 'z'"));
     }
 
     #[test]
     fn overwriting_a_bookmark_replaces_position() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.list_state.select(Some(1));
         app.set_mark('a');
         app.list_state.select(Some(4));
@@ -1590,7 +1663,7 @@ mod tests {
 
     #[test]
     fn multiple_distinct_bookmarks_coexist() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.list_state.select(Some(1));
         app.set_mark('a');
         app.list_state.select(Some(3));
@@ -1608,7 +1681,7 @@ mod tests {
 
     #[test]
     fn bookmark_survives_filter_cycle() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         // Bookmark step 4 (Bash tool_use, original index 3)
         app.list_state.select(Some(3));
         app.set_mark('b');
@@ -1624,7 +1697,7 @@ mod tests {
 
     #[test]
     fn jump_to_mark_reports_hidden_by_filter() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         // Bookmark user text at step 0
         app.list_state.select(Some(0));
         app.set_mark('u');
@@ -1641,7 +1714,7 @@ mod tests {
 
     #[test]
     fn cancel_pending_clears_state() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.begin_set_mark();
         assert_eq!(app.pending, Some(PendingKey::SetMark));
         app.cancel_pending();
@@ -1650,21 +1723,21 @@ mod tests {
 
     #[test]
     fn click_to_select_sets_index() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.click_to_select(3);
         assert_eq!(app.list_state.selected(), Some(3));
     }
 
     #[test]
     fn click_to_select_clamps_out_of_bounds() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.click_to_select(999);
         assert_eq!(app.list_state.selected(), Some(5));
     }
 
     #[test]
     fn click_to_select_respects_filter() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.apply_filter("[tool]");
         assert_eq!(app.visible_count(), 2);
         app.click_to_select(1);
@@ -1693,7 +1766,7 @@ mod tests {
 
     #[test]
     fn sync_conversation_cursor_on_user_step_selects_user() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.list_state.select(Some(0));
         app.sync_conversation_cursor();
         assert_eq!(app.conversation_list_state.selected(), Some(0));
@@ -1701,7 +1774,7 @@ mod tests {
 
     #[test]
     fn sync_conversation_cursor_on_tool_step_selects_prior_text() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.list_state.select(Some(3)); // tool_use Bash
         app.sync_conversation_cursor();
         // orig=3; rposition finds largest i<=3 in [0, 5] -> 0 (user)
@@ -1710,7 +1783,7 @@ mod tests {
 
     #[test]
     fn sync_conversation_cursor_on_final_assistant() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.list_state.select(Some(5));
         app.sync_conversation_cursor();
         assert_eq!(app.conversation_list_state.selected(), Some(1));
@@ -1718,7 +1791,7 @@ mod tests {
 
     #[test]
     fn toggle_layout_flips_three_pane_flag() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         assert!(app.three_pane);
         app.toggle_layout();
         assert!(!app.three_pane);
@@ -1792,7 +1865,7 @@ mod tests {
 
     #[test]
     fn count_buffer_accumulates_digits() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.append_count_digit('1');
         app.append_count_digit('2');
         app.append_count_digit('3');
@@ -1801,14 +1874,14 @@ mod tests {
 
     #[test]
     fn count_buffer_rejects_non_digits() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.append_count_digit('a');
         assert_eq!(app.count_buffer, "");
     }
 
     #[test]
     fn count_buffer_caps_length() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         for _ in 0..10 {
             app.append_count_digit('9');
         }
@@ -1817,13 +1890,13 @@ mod tests {
 
     #[test]
     fn take_count_returns_one_when_empty() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         assert_eq!(app.take_count(), 1);
     }
 
     #[test]
     fn take_count_parses_and_clears() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.append_count_digit('3');
         app.append_count_digit('7');
         assert_eq!(app.take_count(), 37);
@@ -1832,7 +1905,7 @@ mod tests {
 
     #[test]
     fn take_count_never_returns_zero() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.append_count_digit('0');
         // count_buffer == "0" → parses as 0 → clamped to 1
         assert_eq!(app.take_count(), 1);
@@ -1840,7 +1913,7 @@ mod tests {
 
     #[test]
     fn has_count_reflects_buffer_state() {
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         assert!(!app.has_count());
         app.append_count_digit('5');
         assert!(app.has_count());
@@ -1852,7 +1925,7 @@ mod tests {
     fn count_prefix_multiplies_next_navigation() {
         // Simulate the runtime loop behavior: after digits are collected,
         // next() should be called take_count() times.
-        let mut app = App::new(sample_steps());
+        let mut app = App::new(sample_steps(), false);
         app.list_state.select(Some(0));
         app.append_count_digit('3');
         let n = app.take_count();

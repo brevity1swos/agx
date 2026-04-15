@@ -121,7 +121,7 @@ actual `--summary` output. Contribution on-ramp is documented.
 
 ---
 
-## Phase 1 — v0.2: Observability & Cost (in progress)
+## Phase 1 — v0.2: Observability & Cost ✅ (shipped 2026-04-15)
 
 **Goal:** Answer the first question every user asks after a session:
 *"how much did that cost and where did the time go?"* Pure deepening of the
@@ -154,18 +154,35 @@ tokens + cost are prerequisites for the corpus analytics in Phase 3.
       if model is unknown rather than guessing
 - [x] Each pricing entry carries a `last_verified` field; a test asserts
       the field is non-empty on every row
-- [ ] `--no-cost` flag to suppress cost columns for users who'd rather not see them
+- [x] `--no-cost` flag to suppress cost columns in summary, TUI status bar,
+      detail pane, and stats overlay
 
-**1.3 — Summary + TUI rendering** (partial)
+**1.3 — Summary + TUI rendering** ✅
 - [x] `--summary` mode adds total-cost, total-tokens, and model-list lines;
       falls back to "(unknown — no pricing entry for model)" when the model
       isn't in the pricing table
-- [x] Integration test guards the summary against regression
+- [x] Integration tests guard the summary against regression and verify
+      `--no-cost` suppresses cost while keeping tokens
 - [x] Claude Code fixture enriched with realistic usage so the pipeline is
       exercised end-to-end (4 assistant turns with cache-hit pattern)
-- [ ] Stats overlay (`s`) adds cost column per tool
-- [ ] Status bar shows running cost of session
-- [ ] Per-step detail pane shows tokens + cost alongside duration
+- [x] Stats overlay (`s`) adds session totals (tokens + cost + model list)
+- [x] Status bar shows running cost of session alongside position gauge
+- [x] Per-step detail pane shows duration, model, tokens, and cost as a
+      meta block above the detail text
+
+**1.4 — Export** ✅
+- [x] `--export md` — Markdown transcript, ASCII-only kind prefixes
+      ([user] / [asst] / [tool] / [result] per terminal-native principle),
+      code-fenced tool I/O, totals header
+- [x] `--export html` — self-contained HTML with inline CSS, no JS, no
+      external assets. Color-coded by step kind. Escapes detail to prevent
+      injection
+- [x] `--export json` — stable-schema JSON dump (`{totals, steps}`) as the
+      first public programmatic interface; serde_json round-trips through
+      `serde_json::Value`
+- [x] Unit tests cover JSON round-trip, MD section count, HTML
+      self-containment, HTML injection prevention, and cost suppression
+      paths
 
 **1.4 — Export**
 - [ ] `--export md` — Markdown transcript, one section per step, code-fenced

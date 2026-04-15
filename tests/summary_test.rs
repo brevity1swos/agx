@@ -116,6 +116,28 @@ fn summary_shows_token_and_cost_lines_when_fixture_has_usage() {
 }
 
 #[test]
+fn no_cost_flag_suppresses_cost_line_but_keeps_tokens() {
+    let output = Command::new(agx_bin())
+        .arg("--summary")
+        .arg("--no-cost")
+        .arg("assets/sample_session.jsonl")
+        .output()
+        .expect("failed to run agx");
+    assert!(output.status.success(), "agx exited non-zero");
+    let out = String::from_utf8_lossy(&output.stdout);
+    // Cost line MUST be suppressed
+    assert!(
+        !out.contains("estimated cost"),
+        "cost line should be suppressed with --no-cost: {out}"
+    );
+    // Token counters MUST still be shown
+    assert!(
+        out.contains("input tokens,"),
+        "tokens should still be shown under --no-cost: {out}"
+    );
+}
+
+#[test]
 fn debug_unknowns_runs_without_error_and_prints_to_stderr() {
     let output = Command::new(agx_bin())
         .arg("--debug-unknowns")

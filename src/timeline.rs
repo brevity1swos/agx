@@ -6,7 +6,7 @@ use std::collections::HashMap;
 pub(crate) const LABEL_PREVIEW_WIDTH: usize = 60;
 pub(crate) const RESULT_PREVIEW_WIDTH: usize = 50;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct Step {
     pub label: String,
     pub detail: String,
@@ -48,7 +48,7 @@ impl Step {
 /// Session-level totals for the `--summary` mode and future corpus
 /// analytics. Cost is `None` when no step had a known model; otherwise it
 /// sums `Step::cost_usd()` across steps that could be costed.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, serde::Serialize)]
 pub struct SessionTotals {
     pub tokens_in: u64,
     pub tokens_out: u64,
@@ -136,7 +136,8 @@ pub(crate) fn attach_usage_to_first(
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum StepKind {
     UserText,
     ToolResult,
