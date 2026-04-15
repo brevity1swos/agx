@@ -1,12 +1,12 @@
 # agx
 
-*Just another gdb, but for your agent.*
-
-Step through and debug AI agent traces without leaving your terminal. Written in Rust.
+*[rgx](https://github.com/brevity1swos/rgx) is to regex101 what agx is to your browser-based agent trace dashboard — the terminal-native sibling. Zero instrumentation, works on Claude Code / Codex / Gemini out of the box.*
 
 ![demo](assets/demo.gif)
 
-A terminal-native TUI that turns AI agent session files into a navigable timeline of user turns, assistant turns, tool calls, and tool results — with the original call input and the response visible on a single screen.
+A terminal TUI that turns AI agent session files into a navigable timeline of user turns, assistant turns, tool calls, and tool results — with the original call input and the response visible on a single screen. No SDK changes, no hosted dashboard, no telemetry — agx reads the JSONL/JSON files your agent CLI already writes.
+
+You still have Langfuse / LangSmith / Helicone / your team's internal dashboard for the team-sharing, retention, and alerting side of the story. agx is what you reach for when you're already in the terminal and just want to scrub through a session with vim bindings.
 
 Inspired by [rgx](https://github.com/brevity1swos/rgx) — same dual-cursor / heatmap / time-travel approach that rgx applies to regex matching, applied here to agent execution.
 
@@ -77,6 +77,10 @@ agx session_a.jsonl --diff session_b.jsonl
 
 # Non-interactive summary for scripts
 agx --summary <session>
+
+# Diagnose format drift — prints every entry type or field the parser
+# didn't recognize, to stderr. Useful when a new CLI version lands.
+agx --debug-unknowns <session>
 ```
 
 ## Use on your own sessions
@@ -106,9 +110,9 @@ For non-interactive use (scripts, CI, piping), use `--summary` mode:
 
 ```bash
 $ ./target/release/agx --summary assets/sample_session.jsonl
-Loaded 9 entries from assets/sample_session.jsonl
-  user: 4  assistant: 4  other: 1  tool_uses: 3  tool_results: 3
-Built 11 timeline steps. First 20:
+Loaded Claude Code session from assets/sample_session.jsonl
+  11 timeline steps: 1 user, 4 assistant, 3 tool_uses, 3 tool_results
+First 20:
     1  [user]   Write a Python function that returns the first n Fibonacci n…
     2  [asst]   I'll create a fib.py with an iterative implementation — sing…
     3  [tool]   Write (toolu_synth…)
@@ -185,7 +189,7 @@ src/
 
 Each parser produces `Vec<Step>` directly; `timeline::build()` is the Claude Code adapter that converts the format's native `Entry` enum into Steps. All formats share the same step-helper functions (`user_text_step`, `assistant_text_step`, `tool_use_step`, `tool_result_step`) so the TUI renders every format identically.
 
-6 direct dependencies: `ratatui`, `crossterm`, `serde`, `serde_json`, `anyhow`, `clap`.
+8 direct dependencies: `ratatui`, `crossterm`, `serde`, `serde_json`, `anyhow`, `clap`, `clap_complete`, `arboard`.
 
 ## Credits
 

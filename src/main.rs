@@ -1,5 +1,6 @@
 mod browser;
 mod codex;
+mod debug_unknowns;
 mod format;
 mod gemini;
 mod generic;
@@ -19,7 +20,7 @@ use timeline::{Step, compute_tool_stats, count_from_steps};
 #[command(
     name = "agx",
     version,
-    about = "Step-through debugger for AI agent execution traces"
+    about = "Step-through debugger for your agent"
 )]
 struct Cli {
     /// Path to a session file (Claude Code JSONL, Codex CLI JSONL, or Gemini CLI JSON).
@@ -41,6 +42,11 @@ struct Cli {
     /// Generate shell completions and print to stdout
     #[arg(long, value_name = "SHELL")]
     completions: Option<Shell>,
+
+    /// Scan the session for entry types or fields the parser doesn't recognize
+    /// and print a report to stderr. Useful for diagnosing format drift.
+    #[arg(long)]
+    debug_unknowns: bool,
 }
 
 fn load_session(path: &Path) -> Result<Vec<Step>> {
@@ -149,6 +155,12 @@ fn main() -> Result<()> {
             None => return Ok(()),
         }
     };
+
+    if cli.debug_unknowns {
+        let fmt = format::detect(&session_path)?;
+        let report = debug_unknowns::scan(fmt, &session_path)?;
+        report.print(&mut std::io::stderr())?;
+    }
 
     let steps = load_session(&session_path)?;
 

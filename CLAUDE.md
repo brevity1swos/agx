@@ -1,6 +1,6 @@
 # agx
 
-Step-through debugger for AI agent execution traces. Rust TUI app using ratatui + crossterm + serde. Narrow scope, deep engineering, terminal-native. Consumes Claude Code, Codex CLI, and Gemini CLI session files and renders them as a navigable color-coded timeline with bidirectional tool call ↔ tool result pairing regardless of source format.
+Step-through debugger for your agent. Rust TUI app using ratatui + crossterm + serde. Narrow scope, deep engineering, terminal-native. Consumes Claude Code, Codex CLI, and Gemini CLI session files and renders them as a navigable color-coded timeline with bidirectional tool call ↔ tool result pairing regardless of source format.
 
 ## Quick Reference
 
