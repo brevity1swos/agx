@@ -1,6 +1,6 @@
 use crate::timeline::{
-    Step, assistant_text_step, compute_durations, parse_iso_ms, pretty_json, tool_result_step,
-    tool_use_step, user_text_step,
+    Step, Usage, assistant_text_step, attach_usage_to_first, compute_durations, parse_iso_ms,
+    pretty_json, tool_result_step, tool_use_step, user_text_step,
 };
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -22,6 +22,23 @@ struct Message {
     content: serde_json::Value,
     #[serde(default, rename = "toolCalls")]
     tool_calls: Vec<ToolCall>,
+    #[serde(default)]
+    model: Option<String>,
+    /// Gemini's native usage shape is `usageMetadata` with camelCase fields
+    /// per the Gemini API. Optional — absent on older sessions and on
+    /// non-model messages.
+    #[serde(default, rename = "usageMetadata")]
+    usage_metadata: Option<GeminiUsage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeminiUsage {
+    #[serde(default, rename = "promptTokenCount")]
+    prompt_tokens: Option<u64>,
+    #[serde(default, rename = "candidatesTokenCount")]
+    output_tokens: Option<u64>,
+    #[serde(default, rename = "cachedContentTokenCount")]
+    cached_tokens: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -57,6 +74,7 @@ pub fn load(path: &Path) -> Result<Vec<Step>> {
                 }
             }
             "gemini" => {
+                let first_idx = steps.len();
                 let text = extract_message_text(&msg.content);
                 if !text.trim().is_empty() {
                     let mut step = assistant_text_step(&text);
@@ -74,6 +92,19 @@ pub fn load(path: &Path) -> Result<Vec<Step>> {
                         tool_result_step(&tc.id, &result_text, Some(&tc.name), Some(&input_pretty));
                     res_step.timestamp_ms = tc_ts;
                     steps.push(res_step);
+                }
+                if steps.len() > first_idx {
+                    let usage = msg
+                        .usage_metadata
+                        .as_ref()
+                        .map(|u| Usage {
+                            tokens_in: u.prompt_tokens,
+                            tokens_out: u.output_tokens,
+                            cache_read: u.cached_tokens,
+                            cache_create: None,
+                        })
+                        .unwrap_or_default();
+                    attach_usage_to_first(&mut steps, first_idx, msg.model.as_deref(), &usage);
                 }
             }
             _ => {}
@@ -230,6 +261,54 @@ mod tests {
         let steps = load(f.path()).unwrap();
         assert_eq!(steps.len(), 1);
         assert_eq!(steps[0].kind, StepKind::UserText);
+    }
+
+    #[test]
+    fn parses_usagemetadata_and_model_on_gemini_message() {
+        let json = r#"{
+            "sessionId":"s1",
+            "messages":[
+                {
+                    "type":"gemini",
+                    "content":"hello",
+                    "model":"gemini-2-5-pro",
+                    "usageMetadata":{"promptTokenCount":80,"candidatesTokenCount":40,"cachedContentTokenCount":20}
+                }
+            ]
+        }"#;
+        let f = write_file(json);
+        let steps = load(f.path()).unwrap();
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].model.as_deref(), Some("gemini-2-5-pro"));
+        assert_eq!(steps[0].tokens_in, Some(80));
+        assert_eq!(steps[0].tokens_out, Some(40));
+        assert_eq!(steps[0].cache_read, Some(20));
+    }
+
+    #[test]
+    fn usage_attaches_to_text_when_both_text_and_toolcalls() {
+        // Gemini message with text + tool calls — usage goes on the first
+        // step (text), not the tool steps.
+        let json = r#"{
+            "sessionId":"s1",
+            "messages":[
+                {
+                    "type":"gemini",
+                    "content":"preamble",
+                    "model":"gemini-2-5-pro",
+                    "usageMetadata":{"promptTokenCount":50,"candidatesTokenCount":25},
+                    "toolCalls":[
+                        {"id":"tc1","name":"ls","args":{},"result":[]}
+                    ]
+                }
+            ]
+        }"#;
+        let f = write_file(json);
+        let steps = load(f.path()).unwrap();
+        assert_eq!(steps.len(), 3);
+        assert_eq!(steps[0].tokens_in, Some(50));
+        assert_eq!(steps[1].tokens_in, None);
+        assert_eq!(steps[2].tokens_in, None);
     }
 
     #[test]

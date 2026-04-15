@@ -14,6 +14,126 @@ pub struct Step {
     pub tool_name: Option<String>,
     pub timestamp_ms: Option<u64>,
     pub duration_ms: Option<u64>,
+    /// Model name for this step, if known. Attached to the first step emitted
+    /// from each assistant message (see `attach_usage_to_first` below).
+    pub model: Option<String>,
+    /// Input tokens. Anthropic / OpenAI naming: one-time prompt tokens sent
+    /// to the model for this assistant response.
+    pub tokens_in: Option<u64>,
+    /// Output tokens: tokens the model generated in this assistant response.
+    pub tokens_out: Option<u64>,
+    /// Tokens read from the prompt cache (Anthropic). None for providers
+    /// that don't support or report cache reads.
+    pub cache_read: Option<u64>,
+    /// Tokens written to the prompt cache in this response (Anthropic).
+    pub cache_create: Option<u64>,
+}
+
+impl Step {
+    /// USD cost for this step, computed from its token counters and model.
+    /// Returns `None` when the model is unknown or there are no tokens to
+    /// cost. Delegates to the pricing table in `crate::pricing`.
+    #[must_use]
+    pub fn cost_usd(&self) -> Option<f64> {
+        crate::pricing::cost_usd(
+            self.model.as_deref(),
+            self.tokens_in,
+            self.tokens_out,
+            self.cache_read,
+            self.cache_create,
+        )
+    }
+}
+
+/// Session-level totals for the `--summary` mode and future corpus
+/// analytics. Cost is `None` when no step had a known model; otherwise it
+/// sums `Step::cost_usd()` across steps that could be costed.
+#[derive(Debug, Default)]
+pub struct SessionTotals {
+    pub tokens_in: u64,
+    pub tokens_out: u64,
+    pub cache_read: u64,
+    pub cache_create: u64,
+    pub cost_usd: Option<f64>,
+    pub unique_models: Vec<String>,
+}
+
+impl SessionTotals {
+    #[must_use]
+    pub fn has_tokens(&self) -> bool {
+        self.tokens_in > 0 || self.tokens_out > 0 || self.cache_read > 0 || self.cache_create > 0
+    }
+}
+
+/// Aggregate token counters and cost across a set of steps. Returns zeros
+/// when nothing has usage data; callers should check `has_tokens()` before
+/// displaying.
+#[must_use]
+pub fn compute_session_totals(steps: &[Step]) -> SessionTotals {
+    let mut t = SessionTotals::default();
+    let mut models: Vec<String> = Vec::new();
+    let mut any_cost: Option<f64> = None;
+    for step in steps {
+        t.tokens_in += step.tokens_in.unwrap_or(0);
+        t.tokens_out += step.tokens_out.unwrap_or(0);
+        t.cache_read += step.cache_read.unwrap_or(0);
+        t.cache_create += step.cache_create.unwrap_or(0);
+        if let Some(m) = &step.model
+            && !models.iter().any(|existing| existing == m)
+        {
+            models.push(m.clone());
+        }
+        if let Some(c) = step.cost_usd() {
+            any_cost = Some(any_cost.unwrap_or(0.0) + c);
+        }
+    }
+    t.cost_usd = any_cost;
+    t.unique_models = models;
+    t
+}
+
+/// Normalized usage numbers any parser can produce. Each parser extracts its
+/// format-specific usage shape and lowers to this struct, which is then
+/// attached to the first step emitted from the corresponding assistant
+/// message via `attach_usage_to_first`.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Usage {
+    pub tokens_in: Option<u64>,
+    pub tokens_out: Option<u64>,
+    pub cache_read: Option<u64>,
+    pub cache_create: Option<u64>,
+}
+
+impl Usage {
+    pub fn is_empty(&self) -> bool {
+        self.tokens_in.is_none()
+            && self.tokens_out.is_none()
+            && self.cache_read.is_none()
+            && self.cache_create.is_none()
+    }
+}
+
+/// Attach model + usage to the first step at-or-after `start` in `steps`.
+/// Assistant messages in all formats carry a single usage counter for the
+/// whole message even though agx emits multiple steps (text + tool_uses).
+/// Attaching to the first step avoids double-counting when summing a corpus.
+pub(crate) fn attach_usage_to_first(
+    steps: &mut [Step],
+    start: usize,
+    model: Option<&str>,
+    usage: &Usage,
+) {
+    if let Some(step) = steps.get_mut(start) {
+        if let Some(m) = model {
+            step.model = Some(m.to_string());
+        }
+        if !usage.is_empty() {
+            step.tokens_in = usage.tokens_in;
+            step.tokens_out = usage.tokens_out;
+            step.cache_read = usage.cache_read;
+            step.cache_create = usage.cache_create;
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -190,6 +310,7 @@ pub fn build(entries: &[Entry]) -> Vec<Step> {
             }
             Entry::Assistant(a) => {
                 let ts = a.timestamp.as_deref().and_then(parse_iso_ms);
+                let first_idx = steps.len();
                 for item in &a.message.content {
                     match item {
                         AssistantContentItem::Text { text } => {
@@ -205,6 +326,29 @@ pub fn build(entries: &[Entry]) -> Vec<Step> {
                         }
                         AssistantContentItem::Other => {}
                     }
+                }
+                // If this assistant message produced at least one step, attach
+                // model + usage to the first of them. Format parsers across
+                // agx follow this same convention to avoid double-counting
+                // when summing a corpus.
+                if steps.len() > first_idx {
+                    let usage = a
+                        .message
+                        .usage
+                        .as_ref()
+                        .map(|u| Usage {
+                            tokens_in: u.input_tokens,
+                            tokens_out: u.output_tokens,
+                            cache_read: u.cache_read_input_tokens,
+                            cache_create: u.cache_creation_input_tokens,
+                        })
+                        .unwrap_or_default();
+                    attach_usage_to_first(
+                        &mut steps,
+                        first_idx,
+                        a.message.model.as_deref(),
+                        &usage,
+                    );
                 }
             }
             Entry::Other => {}
@@ -222,6 +366,11 @@ pub(crate) fn user_text_step(text: &str) -> Step {
         tool_name: None,
         timestamp_ms: None,
         duration_ms: None,
+        model: None,
+        tokens_in: None,
+        tokens_out: None,
+        cache_read: None,
+        cache_create: None,
     }
 }
 
@@ -233,6 +382,11 @@ pub(crate) fn assistant_text_step(text: &str) -> Step {
         tool_name: None,
         timestamp_ms: None,
         duration_ms: None,
+        model: None,
+        tokens_in: None,
+        tokens_out: None,
+        cache_read: None,
+        cache_create: None,
     }
 }
 
@@ -244,6 +398,11 @@ pub(crate) fn tool_use_step(id: &str, name: &str, input_pretty: &str) -> Step {
         tool_name: Some(name.to_string()),
         timestamp_ms: None,
         duration_ms: None,
+        model: None,
+        tokens_in: None,
+        tokens_out: None,
+        cache_read: None,
+        cache_create: None,
     }
 }
 
@@ -268,6 +427,11 @@ pub(crate) fn tool_result_step(
         tool_name: tool_name.map(str::to_string),
         timestamp_ms: None,
         duration_ms: None,
+        model: None,
+        tokens_in: None,
+        tokens_out: None,
+        cache_read: None,
+        cache_create: None,
     }
 }
 
@@ -425,6 +589,8 @@ mod tests {
                 timestamp: None,
                 message: AssistantMessage {
                     role: "assistant".into(),
+                    model: None,
+                    usage: None,
                     content: vec![
                         AssistantContentItem::Text {
                             text: "thinking".into(),
@@ -448,6 +614,167 @@ mod tests {
     }
 
     #[test]
+    fn usage_attaches_only_to_first_step_from_assistant_message() {
+        // Assistant message with text + tool_use. Usage applies to the whole
+        // message; only the first (text) step should carry the numbers so a
+        // corpus sum doesn't double-count.
+        use crate::session::{AssistantEntry, AssistantMessage, ClaudeUsage};
+        let entries = vec![Entry::Assistant(AssistantEntry {
+            uuid: "a1".into(),
+            parent_uuid: None,
+            timestamp: None,
+            message: AssistantMessage {
+                role: "assistant".into(),
+                model: Some("claude-opus-4-6".into()),
+                usage: Some(ClaudeUsage {
+                    input_tokens: Some(100),
+                    output_tokens: Some(50),
+                    cache_creation_input_tokens: Some(10),
+                    cache_read_input_tokens: Some(200),
+                }),
+                content: vec![
+                    AssistantContentItem::Text {
+                        text: "thinking".into(),
+                    },
+                    AssistantContentItem::ToolUse {
+                        id: "t1".into(),
+                        name: "Read".into(),
+                        input: serde_json::json!({"path": "/x"}),
+                    },
+                ],
+            },
+        })];
+        let steps = build(&entries);
+        assert_eq!(steps.len(), 2);
+        // First step carries everything
+        assert_eq!(steps[0].model.as_deref(), Some("claude-opus-4-6"));
+        assert_eq!(steps[0].tokens_in, Some(100));
+        assert_eq!(steps[0].tokens_out, Some(50));
+        assert_eq!(steps[0].cache_create, Some(10));
+        assert_eq!(steps[0].cache_read, Some(200));
+        // Second step carries nothing
+        assert_eq!(steps[1].model, None);
+        assert_eq!(steps[1].tokens_in, None);
+        assert_eq!(steps[1].tokens_out, None);
+    }
+
+    #[test]
+    fn missing_usage_leaves_all_steps_clean() {
+        use crate::session::{AssistantEntry, AssistantMessage};
+        let entries = vec![Entry::Assistant(AssistantEntry {
+            uuid: "a1".into(),
+            parent_uuid: None,
+            timestamp: None,
+            message: AssistantMessage {
+                role: "assistant".into(),
+                model: None,
+                usage: None,
+                content: vec![AssistantContentItem::Text { text: "ok".into() }],
+            },
+        })];
+        let steps = build(&entries);
+        assert_eq!(steps[0].tokens_in, None);
+        assert_eq!(steps[0].model, None);
+    }
+
+    #[test]
+    fn attach_usage_to_first_noop_on_empty_slice() {
+        let mut steps: Vec<Step> = Vec::new();
+        // Should not panic.
+        attach_usage_to_first(&mut steps, 0, Some("m"), &Usage::default());
+    }
+
+    #[test]
+    fn usage_is_empty_detects_all_none() {
+        assert!(Usage::default().is_empty());
+        let u = Usage {
+            tokens_in: Some(1),
+            ..Usage::default()
+        };
+        assert!(!u.is_empty());
+    }
+
+    #[test]
+    fn step_cost_usd_delegates_to_pricing_table() {
+        let mut step = assistant_text_step("hi");
+        step.model = Some("claude-opus-4-6".into());
+        step.tokens_in = Some(1_000_000);
+        step.tokens_out = Some(1_000_000);
+        let c = step.cost_usd().unwrap();
+        assert!((c - 90.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn step_cost_usd_none_when_no_model() {
+        let mut step = assistant_text_step("hi");
+        step.tokens_in = Some(100);
+        assert_eq!(step.cost_usd(), None);
+    }
+
+    #[test]
+    fn step_cost_usd_none_when_no_tokens() {
+        let mut step = assistant_text_step("hi");
+        step.model = Some("claude-opus-4-6".into());
+        assert_eq!(step.cost_usd(), None);
+    }
+
+    #[test]
+    fn session_totals_sums_tokens_and_costs_across_steps() {
+        let mut s1 = assistant_text_step("a");
+        s1.model = Some("claude-opus-4-6".into());
+        s1.tokens_in = Some(100);
+        s1.tokens_out = Some(50);
+        let mut s2 = assistant_text_step("b");
+        s2.model = Some("claude-opus-4-6".into());
+        s2.tokens_in = Some(200);
+        s2.tokens_out = Some(75);
+        let t = compute_session_totals(&[s1, s2]);
+        assert_eq!(t.tokens_in, 300);
+        assert_eq!(t.tokens_out, 125);
+        assert_eq!(t.unique_models, vec!["claude-opus-4-6"]);
+        assert!(t.cost_usd.is_some());
+    }
+
+    #[test]
+    fn session_totals_dedupes_unique_models() {
+        let mut s1 = assistant_text_step("a");
+        s1.model = Some("claude-opus-4-6".into());
+        let mut s2 = assistant_text_step("b");
+        s2.model = Some("claude-sonnet-4-6".into());
+        let mut s3 = assistant_text_step("c");
+        s3.model = Some("claude-opus-4-6".into());
+        let t = compute_session_totals(&[s1, s2, s3]);
+        assert_eq!(t.unique_models.len(), 2);
+        assert!(t.unique_models.contains(&"claude-opus-4-6".to_string()));
+        assert!(t.unique_models.contains(&"claude-sonnet-4-6".to_string()));
+    }
+
+    #[test]
+    fn session_totals_cost_none_when_no_known_models() {
+        let mut s = assistant_text_step("a");
+        s.model = Some("unknown-model".into());
+        s.tokens_in = Some(100);
+        let t = compute_session_totals(&[s]);
+        assert_eq!(t.tokens_in, 100);
+        assert_eq!(t.cost_usd, None);
+    }
+
+    #[test]
+    fn session_totals_has_tokens_false_on_empty() {
+        let t = SessionTotals::default();
+        assert!(!t.has_tokens());
+    }
+
+    #[test]
+    fn session_totals_has_tokens_true_when_any_counter_set() {
+        let t = SessionTotals {
+            tokens_in: 1,
+            ..SessionTotals::default()
+        };
+        assert!(t.has_tokens());
+    }
+
+    #[test]
     fn tool_result_label_uses_tool_name_from_paired_use() {
         let entries = vec![
             Entry::Assistant(AssistantEntry {
@@ -456,6 +783,8 @@ mod tests {
                 timestamp: None,
                 message: AssistantMessage {
                     role: "assistant".into(),
+                    model: None,
+                    usage: None,
                     content: vec![AssistantContentItem::ToolUse {
                         id: "toolu_abc".into(),
                         name: "Bash".into(),

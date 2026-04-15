@@ -1,6 +1,6 @@
 use crate::timeline::{
-    self, Step, assistant_text_step, compute_durations, parse_iso_ms, pretty_json,
-    tool_result_step, tool_use_step, user_text_step,
+    self, Step, Usage, assistant_text_step, attach_usage_to_first, compute_durations, parse_iso_ms,
+    pretty_json, tool_result_step, tool_use_step, user_text_step,
 };
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -92,11 +92,42 @@ pub fn load(path: &Path) -> Result<Vec<Step>> {
         }
         if let Some(mut step) = maybe_step {
             step.timestamp_ms = ts;
+            let is_assistant_message = payload_type == Some("message")
+                && entry.payload.get("role").and_then(|v| v.as_str()) == Some("assistant");
             steps.push(step);
+            if is_assistant_message {
+                let idx = steps.len() - 1;
+                let model = entry.payload.get("model").and_then(|v| v.as_str());
+                let usage = extract_codex_usage(&entry.payload);
+                attach_usage_to_first(&mut steps, idx, model, &usage);
+            }
         }
     }
     compute_durations(&mut steps);
     Ok(steps)
+}
+
+/// Codex payload usage shape mirrors OpenAI Responses API conventions.
+/// Accepts either snake_case (`input_tokens`) or legacy camelCase
+/// (`promptTokens`) — Codex has used both across its versions.
+fn extract_codex_usage(payload: &serde_json::Value) -> Usage {
+    let Some(usage_obj) = payload.get("usage") else {
+        return Usage::default();
+    };
+    let get_u64 = |keys: &[&str]| -> Option<u64> {
+        for k in keys {
+            if let Some(v) = usage_obj.get(*k).and_then(|v| v.as_u64()) {
+                return Some(v);
+            }
+        }
+        None
+    };
+    Usage {
+        tokens_in: get_u64(&["input_tokens", "prompt_tokens", "promptTokens"]),
+        tokens_out: get_u64(&["output_tokens", "completion_tokens", "completionTokens"]),
+        cache_read: get_u64(&["cached_tokens", "prompt_cache_read_tokens"]),
+        cache_create: None,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -228,6 +259,42 @@ mod tests {
         let steps = load(f.path()).unwrap();
         assert_eq!(steps.len(), 1);
         assert_eq!(steps[0].kind, StepKind::AssistantText);
+    }
+
+    #[test]
+    fn parses_usage_and_model_on_assistant_message() {
+        let jsonl = r#"{"timestamp":"2024-01-01T00:00:00Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}],"model":"gpt-5","usage":{"input_tokens":120,"output_tokens":60,"cached_tokens":40}}}
+"#;
+        let f = write_file(jsonl);
+        let steps = load(f.path()).unwrap();
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].model.as_deref(), Some("gpt-5"));
+        assert_eq!(steps[0].tokens_in, Some(120));
+        assert_eq!(steps[0].tokens_out, Some(60));
+        assert_eq!(steps[0].cache_read, Some(40));
+    }
+
+    #[test]
+    fn legacy_camelcase_usage_fields_parse() {
+        // Older Codex rollouts used `promptTokens` / `completionTokens` —
+        // cover the fallback path in extract_codex_usage.
+        let jsonl = r#"{"timestamp":"2024-01-01T00:00:00Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"x"}],"usage":{"promptTokens":10,"completionTokens":20}}}
+"#;
+        let f = write_file(jsonl);
+        let steps = load(f.path()).unwrap();
+        assert_eq!(steps[0].tokens_in, Some(10));
+        assert_eq!(steps[0].tokens_out, Some(20));
+    }
+
+    #[test]
+    fn user_message_does_not_get_usage() {
+        // Usage attaches only to assistant messages; a user message with a
+        // usage field (unusual but not impossible) should be ignored.
+        let jsonl = r#"{"timestamp":"2024-01-01T00:00:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}],"usage":{"input_tokens":5}}}
+"#;
+        let f = write_file(jsonl);
+        let steps = load(f.path()).unwrap();
+        assert_eq!(steps[0].tokens_in, None);
     }
 
     #[test]

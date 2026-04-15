@@ -34,12 +34,27 @@ fn summary_claude_code_fixture_has_expected_shape() {
         out.starts_with("Loaded Claude Code session from"),
         "unexpected first line: {out}"
     );
-    assert!(out.contains("timeline steps:"), "no step count line in: {out}");
+    assert!(
+        out.contains("timeline steps:"),
+        "no step count line in: {out}"
+    );
     assert!(out.contains("user,"), "missing user count in: {out}");
-    assert!(out.contains("assistant,"), "missing assistant count in: {out}");
-    assert!(out.contains("tool_uses,"), "missing tool_uses count in: {out}");
-    assert!(out.contains("tool_results"), "missing tool_results count in: {out}");
-    assert!(out.contains("First 20:"), "missing first-steps header in: {out}");
+    assert!(
+        out.contains("assistant,"),
+        "missing assistant count in: {out}"
+    );
+    assert!(
+        out.contains("tool_uses,"),
+        "missing tool_uses count in: {out}"
+    );
+    assert!(
+        out.contains("tool_results"),
+        "missing tool_results count in: {out}"
+    );
+    assert!(
+        out.contains("First 20:"),
+        "missing first-steps header in: {out}"
+    );
 }
 
 #[test]
@@ -80,6 +95,27 @@ fn summary_exit_code_nonzero_on_missing_file() {
 }
 
 #[test]
+fn summary_shows_token_and_cost_lines_when_fixture_has_usage() {
+    // The Claude Code fixture is enriched with usage + model on every
+    // assistant message (Phase 1.1 / 1.2). Guard against regression:
+    // if the enrichment is ever removed or the cost pipeline breaks,
+    // these lines disappear and this test fails.
+    let out = run_summary("assets/sample_session.jsonl");
+    assert!(
+        out.contains("input tokens,"),
+        "token counters missing from summary: {out}"
+    );
+    assert!(
+        out.contains("models: claude-opus-4-6"),
+        "model list missing from summary: {out}"
+    );
+    assert!(
+        out.contains("estimated cost: $"),
+        "cost line missing from summary: {out}"
+    );
+}
+
+#[test]
 fn debug_unknowns_runs_without_error_and_prints_to_stderr() {
     let output = Command::new(agx_bin())
         .arg("--debug-unknowns")
@@ -95,5 +131,8 @@ fn debug_unknowns_runs_without_error_and_prints_to_stderr() {
     );
     // stdout should still contain the normal --summary output
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Loaded Claude Code"), "summary missing: {stdout}");
+    assert!(
+        stdout.contains("Loaded Claude Code"),
+        "summary missing: {stdout}"
+    );
 }

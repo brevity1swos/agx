@@ -4,6 +4,7 @@ mod debug_unknowns;
 mod format;
 mod gemini;
 mod generic;
+mod pricing;
 mod session;
 mod timeline;
 mod tui;
@@ -14,14 +15,10 @@ use clap_complete::{Shell, generate};
 use format::Format;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use timeline::{Step, compute_tool_stats, count_from_steps};
+use timeline::{Step, compute_session_totals, compute_tool_stats, count_from_steps};
 
 #[derive(Parser, Debug)]
-#[command(
-    name = "agx",
-    version,
-    about = "Step-through debugger for your agent"
-)]
+#[command(name = "agx", version, about = "Step-through debugger for your agent")]
 struct Cli {
     /// Path to a session file (Claude Code JSONL, Codex CLI JSONL, or Gemini CLI JSON).
     /// Omit to browse recent sessions from ~/.claude, ~/.codex, and ~/.gemini.
@@ -173,6 +170,7 @@ fn main() -> Result<()> {
     if cli.summary {
         let fmt = format::detect(&session_path)?;
         let counts = count_from_steps(&steps);
+        let totals = compute_session_totals(&steps);
         println!("Loaded {} session from {}", fmt, session_path.display());
         println!(
             "  {} timeline steps: {} user, {} assistant, {} tool_uses, {} tool_results",
@@ -182,6 +180,22 @@ fn main() -> Result<()> {
             counts.tool_uses,
             counts.tool_results
         );
+        if totals.has_tokens() {
+            println!(
+                "  {} input tokens, {} output, {} cache_read, {} cache_create",
+                totals.tokens_in, totals.tokens_out, totals.cache_read, totals.cache_create
+            );
+        }
+        if !totals.unique_models.is_empty() {
+            println!("  models: {}", totals.unique_models.join(", "));
+        }
+        match totals.cost_usd {
+            Some(c) => println!("  estimated cost: ${c:.4} USD"),
+            None if totals.has_tokens() => {
+                println!("  estimated cost: (unknown — no pricing entry for model)")
+            }
+            None => {}
+        }
         println!("First 20:");
         for (i, step) in steps.iter().take(20).enumerate() {
             println!("  {:>3}  {}", i + 1, step.label);

@@ -121,7 +121,7 @@ actual `--summary` output. Contribution on-ramp is documented.
 
 ---
 
-## Phase 1 — v0.2: Observability & Cost
+## Phase 1 — v0.2: Observability & Cost (in progress)
 
 **Goal:** Answer the first question every user asks after a session:
 *"how much did that cost and where did the time go?"* Pure deepening of the
@@ -132,29 +132,37 @@ tokens + cost are prerequisites for the corpus analytics in Phase 3.
 
 ### Subplans
 
-**1.1 — Per-step token usage**
-- [ ] Extend `timeline::Step` with `tokens_in: Option<u64>`,
+**1.1 — Per-step token usage** ✅
+- [x] Extend `timeline::Step` with `tokens_in: Option<u64>`,
       `tokens_out: Option<u64>`, `cache_read: Option<u64>`,
       `cache_create: Option<u64>`, `model: Option<String>`
-- [ ] Claude Code: parse `message.usage` from assistant entries in `session.rs`
-- [ ] Codex: parse `usage` on `response_item` message payloads in `codex.rs`
-- [ ] Gemini: parse usage from message objects (schema TBD; verify against
-      real files before committing shape)
-- [ ] Generic: usage from OpenAI-compatible top-level `usage` field
-- [ ] Unit tests per format with fixture entries carrying realistic usage
+- [x] Claude Code: parse `message.usage` from assistant entries in `session.rs`
+- [x] Codex: parse `usage` on `response_item` message payloads in `codex.rs`
+      (handles snake_case and legacy camelCase)
+- [x] Gemini: parse `usageMetadata` from message objects
+      (`promptTokenCount` / `candidatesTokenCount` / `cachedContentTokenCount`)
+- [x] Generic: usage from OpenAI-compatible per-message `usage` field
+- [x] Unit tests per format with fixture entries carrying realistic usage
+- [x] Convention documented: usage + model attach to the FIRST step emitted
+      from each assistant message (avoids double-counting in corpus sums)
 
-**1.2 — Cost tables**
-- [ ] `src/pricing.rs` with hardcoded per-model USD-per-1M-token prices
-      for opus-4-6, sonnet-4-6, haiku-4-5, gpt-5-class, gemini-2-5-pro,
-      and a handful of open-weight defaults
-- [ ] `Step::cost_usd()` computed from tokens × model rate; returns `None`
+**1.2 — Cost tables** ✅
+- [x] `src/pricing.rs` with hardcoded per-model USD-per-1M-token prices
+      for opus-4-6, sonnet-4-6, haiku-4-5, gpt-5, gpt-5-mini,
+      gemini-2-5-pro, gemini-2-5-flash
+- [x] `Step::cost_usd()` computed from tokens × model rate; returns `None`
       if model is unknown rather than guessing
-- [ ] Each pricing entry carries a `// last verified: YYYY-MM-DD` comment
-      to keep maintainers honest as prices move
+- [x] Each pricing entry carries a `last_verified` field; a test asserts
+      the field is non-empty on every row
 - [ ] `--no-cost` flag to suppress cost columns for users who'd rather not see them
 
-**1.3 — Summary + TUI rendering**
-- [ ] `--summary` mode adds total-cost and total-tokens lines
+**1.3 — Summary + TUI rendering** (partial)
+- [x] `--summary` mode adds total-cost, total-tokens, and model-list lines;
+      falls back to "(unknown — no pricing entry for model)" when the model
+      isn't in the pricing table
+- [x] Integration test guards the summary against regression
+- [x] Claude Code fixture enriched with realistic usage so the pipeline is
+      exercised end-to-end (4 assistant turns with cache-hit pattern)
 - [ ] Stats overlay (`s`) adds cost column per tool
 - [ ] Status bar shows running cost of session
 - [ ] Per-step detail pane shows tokens + cost alongside duration

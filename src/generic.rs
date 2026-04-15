@@ -1,6 +1,6 @@
 use crate::timeline::{
-    Step, assistant_text_step, compute_durations, pretty_json, tool_result_step, tool_use_step,
-    user_text_step,
+    Step, Usage, assistant_text_step, attach_usage_to_first, compute_durations, pretty_json,
+    tool_result_step, tool_use_step, user_text_step,
 };
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -23,6 +23,22 @@ struct Message {
     tool_calls: Vec<ToolCall>,
     #[serde(default)]
     tool_call_id: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    /// OpenAI-compatible usage shape. Per-message where SDKs export it that
+    /// way; `None` otherwise.
+    #[serde(default)]
+    usage: Option<OpenAiUsage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiUsage {
+    #[serde(default)]
+    prompt_tokens: Option<u64>,
+    #[serde(default)]
+    completion_tokens: Option<u64>,
+    #[serde(default)]
+    cached_tokens: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -58,6 +74,7 @@ pub fn load(path: &Path) -> Result<Vec<Step>> {
                 }
             }
             "assistant" => {
+                let first_idx = steps.len();
                 let text = extract_text(&msg.content);
                 if !text.trim().is_empty() {
                     steps.push(assistant_text_step(&text));
@@ -65,6 +82,19 @@ pub fn load(path: &Path) -> Result<Vec<Step>> {
                 for tc in &msg.tool_calls {
                     let input_pretty = prettify_arguments(&tc.function.arguments);
                     steps.push(tool_use_step(&tc.id, &tc.function.name, &input_pretty));
+                }
+                if steps.len() > first_idx {
+                    let usage = msg
+                        .usage
+                        .as_ref()
+                        .map(|u| Usage {
+                            tokens_in: u.prompt_tokens,
+                            tokens_out: u.completion_tokens,
+                            cache_read: u.cached_tokens,
+                            cache_create: None,
+                        })
+                        .unwrap_or_default();
+                    attach_usage_to_first(&mut steps, first_idx, msg.model.as_deref(), &usage);
                 }
             }
             "tool" => {
@@ -195,6 +225,30 @@ mod tests {
         let steps = load(f.path()).unwrap();
         assert_eq!(steps.len(), 1);
         assert_eq!(steps[0].kind, StepKind::UserText);
+    }
+
+    #[test]
+    fn parses_openai_usage_and_model_on_assistant_message() {
+        let json = r#"{"messages":[
+            {"role":"assistant","content":"ok","model":"gpt-5","usage":{"prompt_tokens":42,"completion_tokens":17,"cached_tokens":9}}
+        ]}"#;
+        let f = write_file(json);
+        let steps = load(f.path()).unwrap();
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].model.as_deref(), Some("gpt-5"));
+        assert_eq!(steps[0].tokens_in, Some(42));
+        assert_eq!(steps[0].tokens_out, Some(17));
+        assert_eq!(steps[0].cache_read, Some(9));
+    }
+
+    #[test]
+    fn user_message_with_usage_field_is_ignored() {
+        let json = r#"{"messages":[
+            {"role":"user","content":"hi","usage":{"prompt_tokens":5}}
+        ]}"#;
+        let f = write_file(json);
+        let steps = load(f.path()).unwrap();
+        assert_eq!(steps[0].tokens_in, None);
     }
 
     #[test]

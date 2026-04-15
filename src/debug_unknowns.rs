@@ -144,8 +144,7 @@ fn scan_claude_code(content: &str, report: &mut UnknownReport) {
     }
 }
 
-const CODEX_KNOWN_TOP: &[&str] =
-    &["session_meta", "event_msg", "response_item", "turn_context"];
+const CODEX_KNOWN_TOP: &[&str] = &["session_meta", "event_msg", "response_item", "turn_context"];
 const CODEX_KNOWN_PAYLOAD: &[&str] = &["message", "function_call", "function_call_output"];
 
 fn scan_codex(content: &str, report: &mut UnknownReport) {
@@ -255,7 +254,10 @@ mod tests {
 "#;
         let f = write_file(jsonl);
         let report = scan(Format::ClaudeCode, f.path()).unwrap();
-        assert_eq!(report.unknown_top_level.get("summary").unwrap(), &vec![2, 3]);
+        assert_eq!(
+            report.unknown_top_level.get("summary").unwrap(),
+            &vec![2, 3]
+        );
     }
 
     #[test]
@@ -315,10 +317,7 @@ mod tests {
         ]}"#;
         let f = write_file(json);
         let report = scan(Format::Generic, f.path()).unwrap();
-        assert_eq!(
-            report.unknown_top_level.get("developer").unwrap(),
-            &vec![2]
-        );
+        assert_eq!(report.unknown_top_level.get("developer").unwrap(), &vec![2]);
     }
 
     #[test]

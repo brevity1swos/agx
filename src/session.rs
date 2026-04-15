@@ -71,6 +71,27 @@ pub struct AssistantEntry {
 pub struct AssistantMessage {
     pub role: String,
     pub content: Vec<AssistantContentItem>,
+    /// Model name (e.g. "claude-opus-4-6"). Optional — older sessions may not
+    /// include it at the message level.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Usage counters for this assistant response. Applies to the whole
+    /// message, not per-content-item.
+    #[serde(default)]
+    pub usage: Option<ClaudeUsage>,
+}
+
+/// Claude Code's usage shape, mirrored from Anthropic API responses.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClaudeUsage {
+    #[serde(default)]
+    pub input_tokens: Option<u64>,
+    #[serde(default)]
+    pub output_tokens: Option<u64>,
+    #[serde(default)]
+    pub cache_creation_input_tokens: Option<u64>,
+    #[serde(default)]
+    pub cache_read_input_tokens: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -151,6 +172,32 @@ mod tests {
         let line = r#"{"type":"permission-mode","permissionMode":"default","sessionId":"s1"}"#;
         let entry: Entry = serde_json::from_str(line).unwrap();
         assert!(matches!(entry, Entry::Other));
+    }
+
+    #[test]
+    fn parses_usage_and_model_on_assistant_message() {
+        let line = r#"{"type":"assistant","uuid":"a1","parentUuid":null,"timestamp":null,"message":{"role":"assistant","model":"claude-opus-4-6","usage":{"input_tokens":100,"output_tokens":50,"cache_creation_input_tokens":10,"cache_read_input_tokens":200},"content":[{"type":"text","text":"hi"}]}}"#;
+        let entry: Entry = serde_json::from_str(line).unwrap();
+        let Entry::Assistant(a) = entry else {
+            panic!("expected assistant");
+        };
+        assert_eq!(a.message.model.as_deref(), Some("claude-opus-4-6"));
+        let u = a.message.usage.as_ref().unwrap();
+        assert_eq!(u.input_tokens, Some(100));
+        assert_eq!(u.output_tokens, Some(50));
+        assert_eq!(u.cache_creation_input_tokens, Some(10));
+        assert_eq!(u.cache_read_input_tokens, Some(200));
+    }
+
+    #[test]
+    fn assistant_message_without_usage_parses_cleanly() {
+        let line = r#"{"type":"assistant","uuid":"a1","parentUuid":null,"timestamp":null,"message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}"#;
+        let entry: Entry = serde_json::from_str(line).unwrap();
+        let Entry::Assistant(a) = entry else {
+            panic!("expected assistant");
+        };
+        assert!(a.message.usage.is_none());
+        assert!(a.message.model.is_none());
     }
 
     #[test]
