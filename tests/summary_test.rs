@@ -76,6 +76,17 @@ fn summary_gemini_fixture_detects_format() {
 }
 
 #[test]
+fn summary_otel_json_fixture_detects_format() {
+    let out = run_summary("assets/sample_otel_json_traces.json");
+    assert!(
+        out.starts_with("Loaded OpenTelemetry GenAI (JSON) session from"),
+        "format label drift: {out}"
+    );
+    assert!(out.contains("5 timeline steps"), "step count drift: {out}");
+    assert!(out.contains("models: gpt-5"), "model missing: {out}");
+}
+
+#[test]
 fn summary_generic_fixture_detects_format() {
     let out = run_summary("assets/sample_generic_session.json");
     assert!(

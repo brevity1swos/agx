@@ -208,7 +208,7 @@ unpriced custom models) who don't want cost estimation at all.
 
 ---
 
-## Phase 2 — v0.3: OpenTelemetry GenAI + Framework Traces
+## Phase 2 — v0.3: OpenTelemetry GenAI + Framework Traces (in progress)
 
 **Goal:** Capture the framework-level audience in one move. Support OTel
 GenAI semconv as a first-class format and ship parsers for the three or
@@ -223,21 +223,33 @@ biggest leverage point in the roadmap.
 
 ### Subplans
 
-**2.1 — OTel GenAI (JSON export)**
-- [ ] `src/otel_json.rs` parser for OpenTelemetry `traces.json` exports
-      (the shape `otel-desktop-viewer` and `otel-cli` produce — arrays of
-      ResourceSpans)
-- [ ] Map GenAI semconv attributes → `Step`: `gen_ai.request.model` →
-      model, `gen_ai.usage.input_tokens` → tokens_in,
-      `gen_ai.tool.call.arguments` → tool input,
-      `gen_ai.tool.call.id` → pairing key, span kind + name → StepKind
-- [ ] Tolerate both the "one span per message" and "one span per agent
-      iteration" shapes used by different exporters
-- [ ] Detection: file contains `resourceSpans` or `scopeSpans` keys at top
-      level → `Format::OtelJson`
-- [ ] Synthetic fixture `assets/sample_otel_json_traces.json`
-- [ ] Unit tests covering LangChain-OTel, LlamaIndex-OTel, OpenInference
-      semconv (superset of GenAI) shapes
+**2.1 — OTel GenAI (JSON export)** ✅
+- [x] `src/otel_json.rs` parser for OpenTelemetry `traces.json` exports
+      (OTLP-JSON envelope: `resourceSpans` → `scopeSpans` → `spans`)
+- [x] Map GenAI semconv attributes → `Step`: `gen_ai.request.model` →
+      model, `gen_ai.usage.input_tokens` / `.output_tokens` /
+      `.cache_read_tokens` / `.cache_creation_tokens` → tokens,
+      `gen_ai.tool.name` / `.call.id` / `.call.arguments` / `.call.result`
+      → tool_use + paired tool_result, `gen_ai.operation.name` drives
+      span classification
+- [x] Chronological ordering: spans sorted by `startTimeUnixNano` across
+      ResourceSpans / ScopeSpans boundaries
+- [x] Non-GenAI spans (generic HTTP / DB) ignored so agx coexists cleanly
+      with mixed traces
+- [x] Detection: file contains `resourceSpans` top-level key →
+      `Format::OtelJson`, probed before Gemini/Generic in `format::detect`
+- [x] Synthetic fixture `assets/sample_otel_json_traces.json` covers
+      chat → execute_tool → chat with usage + tool pairing
+- [x] 7 unit tests cover minimal chat, usage attachment, system-role
+      dropping, tool pairing, non-GenAI span filtering, cross-span
+      chronological sorting, and the full fixture round-trip
+- [x] `--debug-unknowns` scans OTel files and reports unknown
+      `gen_ai.operation.name` values (known set: chat, text_completion,
+      generate_content, execute_tool)
+- [x] Browser label: `[OTel  ]`
+- [ ] **Deferred**: OpenInference attributes (`llm.*` prefix). Will be
+      added when a real LangChain/LlamaIndex fixture lands in
+      `tests/corpus/otel_json/`
 
 **2.2 — OTel GenAI (OTLP protobuf)** — opt-in feature flag
 - [ ] `--features otel-proto` compile flag (default off; gates

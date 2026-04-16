@@ -8,6 +8,7 @@ pub enum Format {
     Codex,
     Gemini,
     Generic,
+    OtelJson,
 }
 
 impl fmt::Display for Format {
@@ -17,6 +18,7 @@ impl fmt::Display for Format {
             Format::Codex => "Codex CLI",
             Format::Gemini => "Gemini CLI",
             Format::Generic => "Generic conversation",
+            Format::OtelJson => "OpenTelemetry GenAI (JSON)",
         };
         f.write_str(s)
     }
@@ -26,10 +28,14 @@ pub fn detect(path: &Path) -> Result<Format> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("reading session file: {}", path.display()))?;
 
-    // Single JSON object: could be Gemini (sessionId + messages) or Generic (messages with role)
+    // Single JSON object: OTel GenAI (resourceSpans), Gemini (sessionId +
+    // messages), or Generic (messages with role).
     if content.trim_start().starts_with('{')
         && let Ok(v) = serde_json::from_str::<serde_json::Value>(&content)
     {
+        if v.get("resourceSpans").is_some() {
+            return Ok(Format::OtelJson);
+        }
         if v.get("sessionId").is_some() && v.get("messages").is_some() {
             return Ok(Format::Gemini);
         }

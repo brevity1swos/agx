@@ -96,6 +96,7 @@ pub fn scan(format: Format, path: &Path) -> Result<UnknownReport> {
         Format::Codex => scan_codex(&content, &mut report),
         Format::Gemini => scan_gemini(&content, &mut report)?,
         Format::Generic => scan_generic(&content, &mut report)?,
+        Format::OtelJson => scan_otel_json(&content, &mut report)?,
     }
     Ok(report)
 }
@@ -204,6 +205,59 @@ fn scan_gemini(content: &str, report: &mut UnknownReport) -> Result<()> {
 }
 
 const GENERIC_KNOWN_ROLES: &[&str] = &["user", "assistant", "tool", "system"];
+
+// Operations agx currently renders end-to-end. Everything else falls into
+// unknown_top_level with the operation name as the tag — useful signal
+// when new GenAI semconv operations ship.
+const OTEL_KNOWN_OPERATIONS: &[&str] = &[
+    "chat",
+    "text_completion",
+    "generate_content",
+    "execute_tool",
+];
+
+fn scan_otel_json(content: &str, report: &mut UnknownReport) -> Result<()> {
+    let v: serde_json::Value = serde_json::from_str(content)
+        .with_context(|| "parsing OTel JSON session for drift scan")?;
+    let Some(resource_spans) = v.get("resourceSpans").and_then(|x| x.as_array()) else {
+        return Ok(());
+    };
+    let mut span_idx = 0usize;
+    for rs in resource_spans {
+        let Some(scope_spans) = rs.get("scopeSpans").and_then(|x| x.as_array()) else {
+            continue;
+        };
+        for ss in scope_spans {
+            let Some(spans) = ss.get("spans").and_then(|x| x.as_array()) else {
+                continue;
+            };
+            for span in spans {
+                span_idx += 1;
+                report.total_lines += 1;
+                let Some(attrs) = span.get("attributes").and_then(|x| x.as_array()) else {
+                    continue;
+                };
+                let mut op: Option<String> = None;
+                for kv in attrs {
+                    if kv.get("key").and_then(|k| k.as_str()) == Some("gen_ai.operation.name")
+                        && let Some(s) = kv
+                            .get("value")
+                            .and_then(|v| v.get("stringValue"))
+                            .and_then(|v| v.as_str())
+                    {
+                        op = Some(s.to_string());
+                    }
+                }
+                if let Some(op) = op
+                    && !OTEL_KNOWN_OPERATIONS.contains(&op.as_str())
+                {
+                    record(&mut report.unknown_top_level, &op, span_idx);
+                }
+            }
+        }
+    }
+    Ok(())
+}
 
 fn scan_generic(content: &str, report: &mut UnknownReport) -> Result<()> {
     let v: serde_json::Value = serde_json::from_str(content)
