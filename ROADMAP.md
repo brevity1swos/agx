@@ -280,11 +280,46 @@ biggest leverage point in the roadmap.
 - [x] Tests: feature off = 173 unit + 1 corpus + 9 integration = 183;
       feature on = 178 unit (+5 for the protobuf path)
 
-**2.3 — LangChain native `.jsonl` / LangSmith export**
-- [ ] `src/langchain.rs` parser for LangChain's `.jsonl` trace export and
-      LangSmith's export-run JSON
-- [ ] Handle `tool_calls[].name` vs OpenAI's `function.name` split
-- [ ] Detection: first line has `run_type` or `serialized.lc` keys
+**2.3 — LangChain / LangSmith export** ✅
+- [x] `src/langchain.rs` parser for LangSmith's single-JSON "export run"
+      shape — a tree of `Run` objects linked by `child_runs` and walked in
+      chronological order via `start_time`
+- [x] Run-type mapping:
+      - `chain` at root → user text extracted from `inputs.input` /
+        `.question` / `.query` / `.prompt`, with a fallback to the first
+        `human` message in `inputs.messages[0]`
+      - `chat_model` / `llm` → assistant text from
+        `outputs.generations[0][0].message.data.content` + `tool_use`
+        steps per `tool_calls` entry (modern tool-calling shape)
+      - `tool` → paired `tool_result` (and `tool_use` if not already
+        emitted by the prior chat_model) — avoids duplicating the call
+        when the chat_model already announced it
+      - `chain` / `retriever` / `parser` inner runs skipped (no render)
+- [x] Token usage from `outputs.llm_output.token_usage` with
+      `prompt_tokens` / `input_tokens` and `completion_tokens` /
+      `output_tokens` fallback keys (handles OpenAI and Anthropic
+      provider conventions). Model from `outputs.llm_output.model_name`
+      with `extra.invocation_params.model_name` / `.model` fallback.
+- [x] Detection: single JSON with top-level `run_type` + either `inputs`
+      or `outputs` → `Format::Langchain`. Probed before Gemini / Generic
+      in `format::detect`.
+- [x] Synthetic fixture `assets/sample_langchain_export.json` —
+      AgentExecutor → ChatOpenAI with tool_call → list_dir tool →
+      ChatOpenAI final. Exercises tool_call↔tool_run pairing, usage
+      attachment on both LLM runs, and the "don't double-emit tool_use"
+      heuristic.
+- [x] 9 unit tests cover end-to-end fixture, usage attachment on first
+      vs last chat_model, root-input extraction from `.input` and
+      `.messages`, standalone tool runs, invocation_params model
+      fallback, and Anthropic-style `input_tokens` / `output_tokens`
+      token-usage keys.
+- [x] `--debug-unknowns` scans LangChain run trees recursively and
+      reports unknown `run_type` values (known set: chain, llm,
+      chat_model, tool); retriever/parser/prompt show up as drift signal.
+- [x] Browser label: `[LChain]`
+- [ ] **Deferred**: LangChain tracer v1 `.log` JSONL (`post` / `patch`
+      event stream) and `astream_events` JSONL — different wire shape,
+      wire up when a real fixture lands in `tests/corpus/langchain/`
 
 **2.4 — Vercel AI SDK traces**
 - [ ] `src/vercel_ai.rs` parser for `streamText` / `generateText` saved

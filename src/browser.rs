@@ -202,6 +202,7 @@ pub fn prompt_user_to_choose(files: &[SessionFile]) -> Result<Option<PathBuf>> {
             Format::Codex => "[Codex ]",
             Format::Gemini => "[Gemini]",
             Format::Generic => "[Generic]",
+            Format::Langchain => "[LChain]",
             Format::OtelJson => "[OTelJS]",
             Format::OtelProto => "[OTelPB]",
         };

@@ -96,6 +96,7 @@ pub fn scan(format: Format, path: &Path) -> Result<UnknownReport> {
         Format::Codex => scan_codex(&content, &mut report),
         Format::Gemini => scan_gemini(&content, &mut report)?,
         Format::Generic => scan_generic(&content, &mut report)?,
+        Format::Langchain => scan_langchain(&content, &mut report)?,
         Format::OtelJson => scan_otel_json(&content, &mut report)?,
         // Binary OTLP drift scanning would require pulling prost into the
         // scanner too. Skipping for v0.3 — users can still get a parse
@@ -217,6 +218,11 @@ fn scan_gemini(content: &str, report: &mut UnknownReport) -> Result<()> {
 
 const GENERIC_KNOWN_ROLES: &[&str] = &["user", "assistant", "tool", "system"];
 
+// Run types agx renders. Everything else gets reported as a drift signal —
+// retriever / parser / prompt etc. are intentionally ignored today but are
+// still worth surfacing so contributors can see what's in their fixtures.
+const LANGCHAIN_KNOWN_RUN_TYPES: &[&str] = &["chain", "llm", "chat_model", "tool"];
+
 // Operations agx currently renders end-to-end. Everything else falls into
 // unknown_top_level with the operation name as the tag — useful signal
 // when new GenAI semconv operations ship.
@@ -226,6 +232,28 @@ const OTEL_KNOWN_OPERATIONS: &[&str] = &[
     "generate_content",
     "execute_tool",
 ];
+
+fn scan_langchain(content: &str, report: &mut UnknownReport) -> Result<()> {
+    let v: serde_json::Value =
+        serde_json::from_str(content).with_context(|| "parsing LangChain export for drift scan")?;
+    let mut idx = 0usize;
+    fn walk(run: &serde_json::Value, idx: &mut usize, report: &mut UnknownReport) {
+        *idx += 1;
+        report.total_lines += 1;
+        if let Some(ty) = run.get("run_type").and_then(|v| v.as_str())
+            && !LANGCHAIN_KNOWN_RUN_TYPES.contains(&ty)
+        {
+            record(&mut report.unknown_top_level, ty, *idx);
+        }
+        if let Some(children) = run.get("child_runs").and_then(|v| v.as_array()) {
+            for child in children {
+                walk(child, idx, report);
+            }
+        }
+    }
+    walk(&v, &mut idx, report);
+    Ok(())
+}
 
 fn scan_otel_json(content: &str, report: &mut UnknownReport) -> Result<()> {
     let v: serde_json::Value = serde_json::from_str(content)

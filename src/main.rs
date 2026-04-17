@@ -5,6 +5,7 @@ mod export;
 mod format;
 mod gemini;
 mod generic;
+mod langchain;
 mod otel_json;
 mod otel_proto;
 mod pricing;
@@ -77,6 +78,7 @@ fn load_session(path: &Path) -> Result<Vec<Step>> {
         Format::Codex => codex::load(path)?,
         Format::Gemini => gemini::load(path)?,
         Format::Generic => generic::load(path)?,
+        Format::Langchain => langchain::load(path)?,
         Format::OtelJson => otel_json::load(path)?,
         Format::OtelProto => otel_proto::load(path)?,
     };

@@ -8,6 +8,7 @@ pub enum Format {
     Codex,
     Gemini,
     Generic,
+    Langchain,
     OtelJson,
     OtelProto,
 }
@@ -19,6 +20,7 @@ impl fmt::Display for Format {
             Format::Codex => "Codex CLI",
             Format::Gemini => "Gemini CLI",
             Format::Generic => "Generic conversation",
+            Format::Langchain => "LangChain / LangSmith",
             Format::OtelJson => "OpenTelemetry GenAI (JSON)",
             Format::OtelProto => "OpenTelemetry GenAI (protobuf)",
         };
@@ -47,13 +49,18 @@ pub fn detect(path: &Path) -> Result<Format> {
         return Ok(Format::OtelProto);
     };
 
-    // Single JSON object: OTel GenAI (resourceSpans), Gemini (sessionId +
-    // messages), or Generic (messages with role).
+    // Single JSON object: OTel GenAI (resourceSpans), LangSmith/LangChain
+    // export (run_type at top level), Gemini (sessionId + messages), or
+    // Generic (messages with role).
     if content.trim_start().starts_with('{')
         && let Ok(v) = serde_json::from_str::<serde_json::Value>(content)
     {
         if v.get("resourceSpans").is_some() {
             return Ok(Format::OtelJson);
+        }
+        if v.get("run_type").is_some() && (v.get("inputs").is_some() || v.get("outputs").is_some())
+        {
+            return Ok(Format::Langchain);
         }
         if v.get("sessionId").is_some() && v.get("messages").is_some() {
             return Ok(Format::Gemini);
@@ -134,6 +141,14 @@ mod tests {
     fn invalid_first_line_errors() {
         let f = write_file("not json\n");
         assert!(detect(f.path()).is_err());
+    }
+
+    #[test]
+    fn detects_langchain_by_run_type_top_level_key() {
+        let f = write_file(
+            r#"{"id":"r1","name":"chain","run_type":"chain","start_time":"2024-01-01T00:00:00Z","inputs":{"input":"hi"},"outputs":{"output":"hello"},"child_runs":[]}"#,
+        );
+        assert_eq!(detect(f.path()).unwrap(), Format::Langchain);
     }
 
     #[test]
