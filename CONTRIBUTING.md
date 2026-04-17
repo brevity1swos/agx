@@ -130,7 +130,7 @@ Format drift PRs are highest priority — they keep agx working for everyone.
   serde error sites for line-number context.
 - **Commits:** Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`,
   `test:`, `chore:`, `build:`, `perf:`).
-- **MSRV:** Rust 1.74 (edition 2024). Don't bump without discussion.
+- **MSRV:** Rust 1.85 (required by edition 2024). Don't bump without discussion.
 
 See CLAUDE.md for the full architecture map and "Common Tasks" recipes.
 

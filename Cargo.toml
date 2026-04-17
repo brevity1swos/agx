@@ -2,6 +2,7 @@
 name = "agx"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
 description = "Step-through debugger for your agent"
 license = "MIT OR Apache-2.0"
 
