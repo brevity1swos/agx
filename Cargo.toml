@@ -6,6 +6,15 @@ rust-version = "1.85"
 description = "Step-through debugger for your agent"
 license = "MIT OR Apache-2.0"
 
+[features]
+# Binary OTLP (.pb / .otlp) support. Off by default because `prost` + its
+# transitive deps add ~500KB to the binary. Users who only consume JSON
+# traces don't pay this cost. Enable with:
+#   cargo install agx --features otel-proto
+#   cargo build --release --features otel-proto
+default = []
+otel-proto = ["dep:prost"]
+
 [dependencies]
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 crossterm = "0.29"
@@ -15,6 +24,7 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 arboard = "3"
+prost = { version = "0.13", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

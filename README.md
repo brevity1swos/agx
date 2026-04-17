@@ -22,6 +22,12 @@ cargo install --path .
 
 Requires Rust 1.85+ (edition 2024).
 
+Binary OTLP (`.pb` / `.otlp`) support is opt-in because `prost` adds meaningful binary size. If you consume protobuf trace files from `opentelemetry-collector`, add `--features otel-proto`:
+
+```bash
+cargo install --path . --features otel-proto
+```
+
 ### Shell completions
 
 ```bash
@@ -54,6 +60,7 @@ agx auto-detects the session format by inspecting the first line (JSONL) or the 
 | Gemini CLI (Google) | `~/.gemini/tmp/<project>/chats/session-*.json` | ✅ Full |
 | Generic (OpenAI-compatible) | any `{messages: [{role, content, tool_calls}]}` JSON | ✅ Full |
 | OpenTelemetry GenAI (JSON) | any OTLP-JSON traces export with `resourceSpans` + `gen_ai.*` attributes | ✅ Full |
+| OpenTelemetry GenAI (binary protobuf `.pb` / `.otlp`) | OTLP exports from `opentelemetry-collector`, OTLP/HTTP endpoints | ✅ Full (feature-gated — rebuild with `--features otel-proto`) |
 
 Each format has its own parser module (`src/session.rs`, `src/codex.rs`, `src/gemini.rs`, `src/generic.rs`, `src/otel_json.rs`) that converts format-specific entries into the shared `timeline::Step` model. Tool calls are paired with their results regardless of how the underlying format represents the relationship — Claude Code uses `tool_use_id`, Codex uses `call_id`, Gemini packs the call and result into a single atomic `toolCall` object that agx splits, OpenAI-compatible conversations pair by position, and OTel GenAI uses `gen_ai.tool.call.id` on execute_tool spans.
 

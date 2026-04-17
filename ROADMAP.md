@@ -251,15 +251,34 @@ biggest leverage point in the roadmap.
       added when a real LangChain/LlamaIndex fixture lands in
       `tests/corpus/otel_json/`
 
-**2.2 — OTel GenAI (OTLP protobuf)** — opt-in feature flag
-- [ ] `--features otel-proto` compile flag (default off; gates
-      `prost` + `opentelemetry-proto` heavy deps behind a flag per our
-      dep discipline)
-- [ ] `src/otel_proto.rs` decodes binary `.pb`/`.otlp` files
-- [ ] When the feature is off, a `.pb` file prints a helpful error
-      ("rebuild with --features otel-proto") rather than a parse crash
-- [ ] Synthetic fixture generated from the JSON fixture via
-      `opentelemetry-proto`-gen-in-tests
+**2.2 — OTel GenAI (OTLP protobuf)** ✅
+- [x] `--features otel-proto` compile flag (default off; gates `prost`
+      behind a flag per our dep discipline — also skips the originally
+      planned `opentelemetry-proto` dep by hand-writing a minimal
+      prost schema, keeping the feature-on build lean)
+- [x] `src/otel_proto.rs` decodes binary `.pb` / `.otlp` files — stub
+      function when the feature is off, real prost-backed parser when
+      on; both behind the same `load(path) -> Result<Vec<Step>>` API
+- [x] When the feature is off, a non-UTF-8 file prints a helpful error
+      (`rebuild with --features otel-proto` + the exact `cargo install`
+      / `cargo build` commands) rather than a parse crash. Binary
+      content is routed to `Format::OtelProto` at detection time so the
+      failure message surfaces at dispatch, not deep in serde.
+- [x] `format::detect` reads bytes first (previously UTF-8 string) so
+      it can distinguish JSON/JSONL from binary protobuf cleanly
+- [x] Reuses `otel_json::append_span` for span → Step conversion — only
+      the wire decode differs between the JSON and protobuf paths
+- [x] Unit tests build fixtures in-memory via prost `encode_to_vec` and
+      round-trip through `load`: minimal chat, usage attachment,
+      execute_tool pairing, cross-resource chronology, non-GenAI span
+      filtering, invalid-protobuf error. Stub-path test asserts the
+      helpful-error message when the feature is off.
+- [x] Feature-on and feature-off builds both clippy-clean under strict
+      lints; one `#[allow(clippy::enum_variant_names)]` on the
+      `any_value::Value` enum since variant names mirror the OTLP
+      `AnyValue` oneof field names (`string_value`/`bool_value`/etc.)
+- [x] Tests: feature off = 173 unit + 1 corpus + 9 integration = 183;
+      feature on = 178 unit (+5 for the protobuf path)
 
 **2.3 — LangChain native `.jsonl` / LangSmith export**
 - [ ] `src/langchain.rs` parser for LangChain's `.jsonl` trace export and

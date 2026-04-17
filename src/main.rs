@@ -6,6 +6,7 @@ mod format;
 mod gemini;
 mod generic;
 mod otel_json;
+mod otel_proto;
 mod pricing;
 mod session;
 mod timeline;
@@ -77,6 +78,7 @@ fn load_session(path: &Path) -> Result<Vec<Step>> {
         Format::Gemini => gemini::load(path)?,
         Format::Generic => generic::load(path)?,
         Format::OtelJson => otel_json::load(path)?,
+        Format::OtelProto => otel_proto::load(path)?,
     };
     Ok(steps)
 }

@@ -97,6 +97,17 @@ pub fn scan(format: Format, path: &Path) -> Result<UnknownReport> {
         Format::Gemini => scan_gemini(&content, &mut report)?,
         Format::Generic => scan_generic(&content, &mut report)?,
         Format::OtelJson => scan_otel_json(&content, &mut report)?,
+        // Binary OTLP drift scanning would require pulling prost into the
+        // scanner too. Skipping for v0.3 — users can still get a parse
+        // error from the dispatch (or a clean summary if the feature is
+        // on). Phase 2.2 extension if demand shows up.
+        Format::OtelProto => {
+            record(
+                &mut report.unknown_top_level,
+                "<binary-otlp-not-scanned>",
+                0,
+            );
+        }
     }
     Ok(report)
 }

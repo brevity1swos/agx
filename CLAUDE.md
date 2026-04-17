@@ -5,12 +5,15 @@ Step-through debugger for your agent. Rust TUI app using ratatui + crossterm + s
 ## Quick Reference
 
 ```bash
-cargo build --release                      # Build (release)
-cargo test                                 # Run all tests
-cargo clippy --all-targets -- -D warnings  # Lint (must pass clean)
-cargo fmt --check                          # Format check
-cargo fmt                                  # Format apply
-cargo audit                                # Supply chain audit
+cargo build --release                                # Build (release, default features)
+cargo build --release --features otel-proto          # Release build with binary OTLP support
+cargo test                                           # Run all tests (feature-off path)
+cargo test --features otel-proto                     # Run all tests (feature-on path — prost included)
+cargo clippy --all-targets -- -D warnings            # Lint, default features
+cargo clippy --all-targets --features otel-proto -- -D warnings  # Lint with feature on
+cargo fmt --check                                    # Format check
+cargo fmt                                            # Format apply
+cargo audit                                          # Supply chain audit
 ./target/release/agx assets/sample_session.jsonl             # Claude Code fixture
 ./target/release/agx assets/sample_codex_session.jsonl       # Codex fixture
 ./target/release/agx assets/sample_gemini_session.json       # Gemini fixture
@@ -34,6 +37,7 @@ src/
 ├── gemini.rs           # Gemini CLI single-JSON parser (toolCall splitting + usageMetadata)
 ├── generic.rs          # OpenAI-compatible conversation parser ({messages: [{role, content, tool_calls}]})
 ├── otel_json.rs        # OpenTelemetry GenAI JSON parser (OTLP-JSON envelope + gen_ai.* semconv)
+├── otel_proto.rs       # Binary OTLP parser (.pb/.otlp) — feature-gated behind `otel-proto`
 ├── timeline.rs         # Shared Step / StepKind / Usage / SessionTotals + step helpers + compute_* functions
 ├── pricing.rs          # Per-model USD rate table + Step::cost_usd delegation target
 ├── export.rs           # Markdown / HTML / JSON transcript writers (String-returning, no I/O)
@@ -43,7 +47,7 @@ src/
 
 ### Key patterns
 
-- **Format detection** (`src/format.rs`): reads the file content and inspects its shape. Single JSON object with `resourceSpans` → OTel GenAI. `sessionId` + `messages` → Gemini. `messages` alone → Generic OpenAI-compatible. Otherwise JSONL; first non-empty line's `type` field is inspected. `session_meta`/`event_msg`/`response_item`/`turn_context` → Codex. Anything else → Claude Code. No file-extension sniffing — content decides.
+- **Format detection** (`src/format.rs`): reads the file as bytes, tries UTF-8 conversion. Non-UTF-8 content → `Format::OtelProto` (binary OTLP). If UTF-8 and a single JSON object: `resourceSpans` → OTel GenAI (JSON). `sessionId` + `messages` → Gemini. `messages` alone → Generic OpenAI-compatible. Otherwise JSONL; first non-empty line's `type` field is inspected. `session_meta`/`event_msg`/`response_item`/`turn_context` → Codex. Anything else → Claude Code. No file-extension sniffing — content decides.
 - **Per-format parser modules**: Each of `session.rs`, `codex.rs`, `gemini.rs`, `generic.rs`, `otel_json.rs` owns its format-specific deserialize types. `session.rs` exposes a Claude Code `Entry` enum that `timeline::build()` walks. The other four produce `Vec<Step>` directly with no shared intermediate enum. `main.rs` dispatches on the detected format.
 - **Shared step helpers** (`timeline.rs`): `user_text_step`, `assistant_text_step`, `tool_use_step`, `tool_result_step`, `truncate`, `short_id`, `pretty_json`, and `count_from_steps` are `pub(crate)` so every parser produces visually identical timeline items and summary counts. `tool_use_step` takes a pre-formatted input string. `tool_result_step` takes optional name/input args so orphan results degrade gracefully to `(unknown)`.
 - **Usage + model attach convention** (`timeline::attach_usage_to_first`): assistant messages in every format carry a single usage counter for the whole message even though agx may emit multiple steps (text + tool_uses). The shared `Usage` struct and `attach_usage_to_first(steps, start, model, &usage)` helper attach `model` + tokens to the **first** step emitted from each assistant message / span. All five parsers use this same anchor so corpus-level sums (`timeline::compute_session_totals`) never double-count. When adding a new format parser, mirror this pattern.
@@ -52,7 +56,8 @@ src/
   - **Codex**: `call_id` field on `function_call` / `function_call_output` entries. Codex frequently batches multiple `function_call` entries before their outputs arrive; the `call_id` map handles this correctly.
   - **Gemini**: each `toolCall` object in a `gemini` message embeds both call input and result atomically (nested as `result[0].functionResponse.response.output`). agx splits one `toolCall` into a `tool_use` step + a `tool_result` step so the TUI shape matches the other two formats.
   - **Generic**: `tool_calls[]` on an assistant message pairs with subsequent `role: "tool"` messages via `tool_call_id`. System-role messages are dropped.
-  - **OTel GenAI**: a span with `gen_ai.operation.name = "execute_tool"` emits `tool_use` + `tool_result` together from `gen_ai.tool.name` / `.call.id` / `.call.arguments` / `.call.result`. LLM spans (`chat`, `text_completion`, `generate_content`) walk `gen_ai.prompt.{N}.role/.content` and `gen_ai.completion.{N}.role/.content` in numeric order. Non-GenAI spans (generic HTTP/DB) are ignored. Spans across ResourceSpans/ScopeSpans boundaries are sorted by `startTimeUnixNano`.
+  - **OTel GenAI**: a span with `gen_ai.operation.name = "execute_tool"` emits `tool_use` + `tool_result` together from `gen_ai.tool.name` / `.call.id` / `.call.arguments` / `.call.result`. LLM spans (`chat`, `text_completion`, `generate_content`) walk `gen_ai.prompt.{N}.role/.content` and `gen_ai.completion.{N}.role/.content` in numeric order. Non-GenAI spans (generic HTTP/DB) are ignored. Spans across ResourceSpans/ScopeSpans boundaries are sorted by `startTimeUnixNano`. The binary OTLP parser (`otel_proto.rs`) decodes the same logical structure with `prost` and reuses `otel_json::append_span` for the actual span → Step conversion.
+- **Binary OTLP feature gate** (`otel_proto.rs`): the `otel-proto` Cargo feature is off by default. When on, the module compiles a minimal hand-written prost schema (`TracesData` / `ResourceSpans` / `ScopeSpans` / `Span` / `KeyValue` / `AnyValue`) covering only the fields agx reads — intentionally lighter than pulling the full `opentelemetry-proto` crate. When off, `load()` returns a helpful error directing the user to rebuild with the flag. Format detection always routes non-UTF-8 files to `Format::OtelProto` so the failure mode surfaces at dispatch, not deep in serde.
 - **Parser graceful unknown handling** (Claude Code): `#[serde(other)]` on `Entry`, `UserContentItem`, `AssistantContentItem` variants so unknown entry types or schema drift degrade to `Other` instead of failing the parse. Codex, Gemini, Generic, and OTel parsers use `serde_json::Value` internally for the payload so unknown fields are ignored without panicking.
 - **Format-drift diagnostics** (`src/debug_unknowns.rs`): `--debug-unknowns` adds one `scan_<format>` per format. Each scanner walks the raw JSON/JSONL (second pass, zero runtime cost when the flag is off) and reports unknown top-level types, payload types, content-item types, or operation names — grouped with the first three line/span-index samples. Used in issue templates for format-drift reports.
 - **Pricing + cost** (`src/pricing.rs`): a hand-curated `ModelPricing` table keyed by model name, case-insensitive exact match (no fuzzy family fallback — avoids silent wrong numbers on new variants). Returns `None` for unknown models or zero-token inputs rather than fabricating cost. `Step::cost_usd()` is a thin delegate. Every row has a `last_verified` string; a test asserts it's non-empty.

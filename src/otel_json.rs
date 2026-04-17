@@ -138,7 +138,11 @@ fn unwrap_any_value(v: &serde_json::Value) -> Option<serde_json::Value> {
     None
 }
 
-fn append_span(attrs: &HashMap<&str, serde_json::Value>, ts_ns: u64, steps: &mut Vec<Step>) {
+pub(crate) fn append_span(
+    attrs: &HashMap<&str, serde_json::Value>,
+    ts_ns: u64,
+    steps: &mut Vec<Step>,
+) {
     let Some(op) = get_str(attrs, "gen_ai.operation.name") else {
         // No GenAI marker — skip (generic HTTP/DB spans don't belong on an
         // agent timeline).
