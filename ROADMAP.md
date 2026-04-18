@@ -321,13 +321,50 @@ biggest leverage point in the roadmap.
       event stream) and `astream_events` JSONL — different wire shape,
       wire up when a real fixture lands in `tests/corpus/langchain/`
 
-**2.4 — Vercel AI SDK traces**
-- [ ] `src/vercel_ai.rs` parser for `streamText` / `generateText` saved
-      traces (JSON arrays of `{ role, content, toolInvocations }`)
-- [ ] Already partially hits `Format::Generic`; split out because the
-      `toolInvocations` schema is idiosyncratic enough that generic
-      treatment loses fidelity
-- [ ] Verify against a trace captured from `@ai-sdk/openai` with tool calling
+**2.4 — Vercel AI SDK traces** ✅
+- [x] `src/vercel_ai.rs` parser for `generateText` / `streamText` saved
+      result objects (the shape most backends actually serialize to disk)
+- [x] Walks `steps[]` when present (multi-step agent loops) — per-step
+      usage + model attach to each step's first emitted timeline row;
+      treats the root object as a single implicit step when `steps[]` is
+      absent (plain single-turn `generateText` result)
+- [x] camelCase tool-call fields: `toolCallId` / `toolName` / `args` as
+      a JSON object (not a serialized string the way OpenAI does it);
+      keeps agx faithful to the SDK's own wire shape
+- [x] Token counters handle both AI SDK v4 (`promptTokens` /
+      `completionTokens`) and v5+ (`inputTokens` / `outputTokens`)
+      naming plus cache fields (`cachedInputTokens` /
+      `cacheCreationInputTokens`). All-zero usage blocks are treated as
+      "no LLM call on this step" so tool-result-only steps don't sprout
+      misleading zero-token rows.
+- [x] User-prompt extraction: `prompt` string → first `messages[]`
+      entry with `role: "user"` → `content` as string, array of
+      `{type, text}` parts, or message-level `parts` (v5 UI shape)
+- [x] Model from `response.modelId` per step with root-level
+      `response.modelId` / `modelId` / `model` fallback — but usage has
+      NO root-level fallback since root usage is an aggregate and would
+      double-count at the corpus level
+- [x] Detection (in `format::detect`): three independent heuristics —
+      `finishReason` at top level, `steps[0].stepType` present, or
+      camelCase `toolCalls[0].toolCallId` — any one triggers. Probed
+      before Generic so Vercel wins on its specific markers while plain
+      OpenAI-compatible conversations still fall through.
+- [x] Synthetic fixture `assets/sample_vercel_ai_session.json` —
+      three-step agent: chat with tool_call → tool-result-only step with
+      zero usage → continue step with final answer. Exercises every
+      branch: user extraction, multi-step walking, zero-usage handling,
+      usage anchor per step.
+- [x] 10 unit tests cover end-to-end fixture, usage anchor convention,
+      zero-usage suppression, single-step shape (no `steps[]`), v5
+      `inputTokens`/`outputTokens` aliases, `prompt` string user
+      extraction, content-array parts, tool_call args preservation.
+- [x] `--debug-unknowns` scans `steps[].stepType` and reports unknown
+      values (known: initial, continue, tool-result)
+- [x] Browser label: `[Vercel]`
+- [ ] **Deferred** (tracked in module docs): `useChat` / React UI
+      message format with per-message `parts` arrays containing
+      `tool-invocation` items — different idiom, will wire when a real
+      fixture lands in `tests/corpus/vercel_ai/`
 
 **2.5 — LlamaIndex + Pydantic AI quick wins**
 - [ ] LlamaIndex: most LlamaIndex users export via OTel already (covered by

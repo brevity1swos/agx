@@ -1,0 +1,79 @@
+{
+  "text": "The directory contains README.md, Cargo.toml, and a src/ folder.",
+  "finishReason": "stop",
+  "usage": {
+    "promptTokens": 300,
+    "completionTokens": 75,
+    "totalTokens": 375
+  },
+  "steps": [
+    {
+      "stepType": "initial",
+      "text": "I'll list the files using the list_dir tool.",
+      "toolCalls": [
+        {
+          "type": "tool-call",
+          "toolCallId": "call_synth_001",
+          "toolName": "list_dir",
+          "args": {"path": "."}
+        }
+      ],
+      "toolResults": [],
+      "usage": {"promptTokens": 120, "completionTokens": 45, "totalTokens": 165},
+      "finishReason": "tool-calls",
+      "response": {
+        "id": "resp_synth_1",
+        "modelId": "gpt-5",
+        "timestamp": "2024-01-01T00:00:01Z",
+        "messages": []
+      }
+    },
+    {
+      "stepType": "tool-result",
+      "text": "",
+      "toolCalls": [],
+      "toolResults": [
+        {
+          "type": "tool-result",
+          "toolCallId": "call_synth_001",
+          "toolName": "list_dir",
+          "args": {"path": "."},
+          "result": "README.md\nCargo.toml\nsrc/\n"
+        }
+      ],
+      "usage": {"promptTokens": 0, "completionTokens": 0, "totalTokens": 0},
+      "response": {
+        "id": "resp_synth_2",
+        "modelId": "gpt-5",
+        "timestamp": "2024-01-01T00:00:02Z",
+        "messages": []
+      }
+    },
+    {
+      "stepType": "continue",
+      "text": "The directory contains README.md, Cargo.toml, and a src/ folder.",
+      "toolCalls": [],
+      "toolResults": [],
+      "usage": {"promptTokens": 180, "completionTokens": 30, "totalTokens": 210},
+      "finishReason": "stop",
+      "response": {
+        "id": "resp_synth_3",
+        "modelId": "gpt-5",
+        "timestamp": "2024-01-01T00:00:03Z",
+        "messages": []
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": "List files in the current directory and tell me what's there."
+    }
+  ],
+  "response": {
+    "id": "resp_synth",
+    "modelId": "gpt-5",
+    "timestamp": "2024-01-01T00:00:03Z",
+    "messages": []
+  }
+}

@@ -60,6 +60,7 @@ agx auto-detects the session format by inspecting the first line (JSONL) or the 
 | Gemini CLI (Google) | `~/.gemini/tmp/<project>/chats/session-*.json` | ✅ Full |
 | Generic (OpenAI-compatible) | any `{messages: [{role, content, tool_calls}]}` JSON | ✅ Full |
 | LangChain / LangSmith | single-JSON run-tree export from `LangSmith → Export run` or LangChain tracer | ✅ Full |
+| Vercel AI SDK | `generateText` / `streamText` result object (`{steps[], toolCalls, toolResults, usage, finishReason, ...}`) | ✅ Full |
 | OpenTelemetry GenAI (JSON) | any OTLP-JSON traces export with `resourceSpans` + `gen_ai.*` attributes | ✅ Full |
 | OpenTelemetry GenAI (binary protobuf `.pb` / `.otlp`) | OTLP exports from `opentelemetry-collector`, OTLP/HTTP endpoints | ✅ Full (feature-gated — rebuild with `--features otel-proto`) |
 

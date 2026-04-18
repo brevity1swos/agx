@@ -76,6 +76,21 @@ fn summary_gemini_fixture_detects_format() {
 }
 
 #[test]
+fn summary_vercel_ai_fixture_detects_format() {
+    let out = run_summary("assets/sample_vercel_ai_session.json");
+    assert!(
+        out.starts_with("Loaded Vercel AI SDK session from"),
+        "format label drift: {out}"
+    );
+    assert!(out.contains("5 timeline steps"), "step count drift: {out}");
+    assert!(out.contains("models: gpt-5"), "model missing: {out}");
+    assert!(
+        out.contains("300 input tokens, 75 output"),
+        "token totals drift: {out}"
+    );
+}
+
+#[test]
 fn summary_langchain_fixture_detects_format() {
     let out = run_summary("assets/sample_langchain_export.json");
     assert!(

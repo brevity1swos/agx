@@ -11,6 +11,7 @@ pub enum Format {
     Langchain,
     OtelJson,
     OtelProto,
+    VercelAi,
 }
 
 impl fmt::Display for Format {
@@ -23,6 +24,7 @@ impl fmt::Display for Format {
             Format::Langchain => "LangChain / LangSmith",
             Format::OtelJson => "OpenTelemetry GenAI (JSON)",
             Format::OtelProto => "OpenTelemetry GenAI (protobuf)",
+            Format::VercelAi => "Vercel AI SDK",
         };
         f.write_str(s)
     }
@@ -50,8 +52,12 @@ pub fn detect(path: &Path) -> Result<Format> {
     };
 
     // Single JSON object: OTel GenAI (resourceSpans), LangSmith/LangChain
-    // export (run_type at top level), Gemini (sessionId + messages), or
-    // Generic (messages with role).
+    // export (run_type at top level), Vercel AI SDK (finishReason or
+    // steps[].stepType), Gemini (sessionId + messages), or Generic
+    // (messages with role). Vercel is checked before Generic because its
+    // outer shape (`messages[]` with role=user) would otherwise match
+    // Generic — the Vercel-specific markers (`finishReason` / `stepType`)
+    // disambiguate.
     if content.trim_start().starts_with('{')
         && let Ok(v) = serde_json::from_str::<serde_json::Value>(content)
     {
@@ -61,6 +67,9 @@ pub fn detect(path: &Path) -> Result<Format> {
         if v.get("run_type").is_some() && (v.get("inputs").is_some() || v.get("outputs").is_some())
         {
             return Ok(Format::Langchain);
+        }
+        if is_vercel_ai(&v) {
+            return Ok(Format::VercelAi);
         }
         if v.get("sessionId").is_some() && v.get("messages").is_some() {
             return Ok(Format::Gemini);
@@ -85,6 +94,32 @@ pub fn detect(path: &Path) -> Result<Format> {
         "session_meta" | "event_msg" | "response_item" | "turn_context" => Ok(Format::Codex),
         _ => Ok(Format::ClaudeCode),
     }
+}
+
+/// Heuristics for Vercel AI SDK `generateText` / `streamText` saved
+/// traces. Any of these is sufficient — they're all specific enough to the
+/// SDK that false positives are rare.
+fn is_vercel_ai(v: &serde_json::Value) -> bool {
+    // `finishReason` at the top level is a definitive SDK marker.
+    if v.get("finishReason").is_some() {
+        return true;
+    }
+    // `steps: [{stepType: ...}]` is the multi-step result shape.
+    if let Some(steps) = v.get("steps").and_then(|s| s.as_array())
+        && steps.iter().any(|s| s.get("stepType").is_some())
+    {
+        return true;
+    }
+    // CamelCase toolCall fields — distinguishes from generic OpenAI
+    // (`tool_calls[0].id`, `.function.name`) which uses snake_case.
+    if let Some(calls) = v.get("toolCalls").and_then(|c| c.as_array())
+        && calls
+            .iter()
+            .any(|c| c.get("toolCallId").is_some() && c.get("toolName").is_some())
+    {
+        return true;
+    }
+    false
 }
 
 #[cfg(test)]
@@ -149,6 +184,38 @@ mod tests {
             r#"{"id":"r1","name":"chain","run_type":"chain","start_time":"2024-01-01T00:00:00Z","inputs":{"input":"hi"},"outputs":{"output":"hello"},"child_runs":[]}"#,
         );
         assert_eq!(detect(f.path()).unwrap(), Format::Langchain);
+    }
+
+    #[test]
+    fn detects_vercel_ai_by_finish_reason_top_level() {
+        let f = write_file(
+            r#"{"text":"ok","finishReason":"stop","usage":{"promptTokens":1,"completionTokens":1},"messages":[{"role":"user","content":"q"}]}"#,
+        );
+        assert_eq!(detect(f.path()).unwrap(), Format::VercelAi);
+    }
+
+    #[test]
+    fn detects_vercel_ai_by_step_type() {
+        let f = write_file(
+            r#"{"steps":[{"stepType":"initial","text":"hi"}],"messages":[{"role":"user","content":"q"}]}"#,
+        );
+        assert_eq!(detect(f.path()).unwrap(), Format::VercelAi);
+    }
+
+    #[test]
+    fn detects_vercel_ai_by_camelcase_tool_call_fields() {
+        let f = write_file(
+            r#"{"toolCalls":[{"toolCallId":"c1","toolName":"x","args":{}}],"messages":[{"role":"user","content":"q"}]}"#,
+        );
+        assert_eq!(detect(f.path()).unwrap(), Format::VercelAi);
+    }
+
+    #[test]
+    fn generic_messages_without_vercel_markers_still_detect_as_generic() {
+        let f = write_file(
+            r#"{"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"}]}"#,
+        );
+        assert_eq!(detect(f.path()).unwrap(), Format::Generic);
     }
 
     #[test]

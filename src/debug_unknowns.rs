@@ -98,6 +98,7 @@ pub fn scan(format: Format, path: &Path) -> Result<UnknownReport> {
         Format::Generic => scan_generic(&content, &mut report)?,
         Format::Langchain => scan_langchain(&content, &mut report)?,
         Format::OtelJson => scan_otel_json(&content, &mut report)?,
+        Format::VercelAi => scan_vercel_ai(&content, &mut report)?,
         // Binary OTLP drift scanning would require pulling prost into the
         // scanner too. Skipping for v0.3 — users can still get a parse
         // error from the dispatch (or a clean summary if the feature is
@@ -223,6 +224,11 @@ const GENERIC_KNOWN_ROLES: &[&str] = &["user", "assistant", "tool", "system"];
 // still worth surfacing so contributors can see what's in their fixtures.
 const LANGCHAIN_KNOWN_RUN_TYPES: &[&str] = &["chain", "llm", "chat_model", "tool"];
 
+// Step types the Vercel AI SDK currently emits. New values landing in a
+// future SDK release will surface here before users notice silent
+// mis-parsing in their timeline.
+const VERCEL_KNOWN_STEP_TYPES: &[&str] = &["initial", "continue", "tool-result"];
+
 // Operations agx currently renders end-to-end. Everything else falls into
 // unknown_top_level with the operation name as the tag — useful signal
 // when new GenAI semconv operations ship.
@@ -252,6 +258,26 @@ fn scan_langchain(content: &str, report: &mut UnknownReport) -> Result<()> {
         }
     }
     walk(&v, &mut idx, report);
+    Ok(())
+}
+
+fn scan_vercel_ai(content: &str, report: &mut UnknownReport) -> Result<()> {
+    let v: serde_json::Value = serde_json::from_str(content)
+        .with_context(|| "parsing Vercel AI SDK session for drift scan")?;
+    // Track steps (if `steps[]` is present) or treat the root as a single
+    // pseudo-step.
+    if let Some(steps) = v.get("steps").and_then(|s| s.as_array()) {
+        for (i, step) in steps.iter().enumerate() {
+            report.total_lines += 1;
+            if let Some(ty) = step.get("stepType").and_then(|v| v.as_str())
+                && !VERCEL_KNOWN_STEP_TYPES.contains(&ty)
+            {
+                record(&mut report.unknown_top_level, ty, i + 1);
+            }
+        }
+    } else {
+        report.total_lines += 1;
+    }
     Ok(())
 }
 

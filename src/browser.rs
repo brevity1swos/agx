@@ -205,6 +205,7 @@ pub fn prompt_user_to_choose(files: &[SessionFile]) -> Result<Option<PathBuf>> {
             Format::Langchain => "[LChain]",
             Format::OtelJson => "[OTelJS]",
             Format::OtelProto => "[OTelPB]",
+            Format::VercelAi => "[Vercel]",
         };
         let when = format_relative_time(f.modified_secs);
         let display_path = short_path(&f.path);

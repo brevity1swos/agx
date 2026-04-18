@@ -12,6 +12,7 @@ mod pricing;
 mod session;
 mod timeline;
 mod tui;
+mod vercel_ai;
 
 use anyhow::Result;
 use clap::{CommandFactory, Parser, ValueEnum};
@@ -81,6 +82,7 @@ fn load_session(path: &Path) -> Result<Vec<Step>> {
         Format::Langchain => langchain::load(path)?,
         Format::OtelJson => otel_json::load(path)?,
         Format::OtelProto => otel_proto::load(path)?,
+        Format::VercelAi => vercel_ai::load(path)?,
     };
     Ok(steps)
 }
