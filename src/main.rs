@@ -1,3 +1,4 @@
+mod annotations;
 mod browser;
 mod codex;
 mod corpus;
@@ -423,6 +424,11 @@ fn main() -> Result<()> {
     } else {
         None
     };
-    tui::run(steps, reload_fn.as_deref(), cli.no_cost)?;
+    tui::run(
+        steps,
+        reload_fn.as_deref(),
+        cli.no_cost,
+        Some(&session_path),
+    )?;
     Ok(())
 }

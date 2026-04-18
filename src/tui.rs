@@ -31,6 +31,15 @@ enum InputMode {
     Command(String),
     Filter(String),
     Search(String),
+    /// `a` in normal mode opens this mode for the current step. Enter
+    /// upserts the note (empty text deletes). Esc discards. The
+    /// attached `step_idx` is the *original* (pre-filter) index, so
+    /// the note lands on the right step even when the view is
+    /// filtered.
+    Annotation {
+        step_idx: usize,
+        buffer: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,6 +76,15 @@ pub struct App {
     /// stats overlay. Token counts are still shown. Set via `--no-cost`.
     no_cost: bool,
     session_totals: SessionTotals,
+    /// Persisted per-step annotations. Empty by default when no session
+    /// path is bound (e.g. unit-test App construction). Mutations go
+    /// through `save_annotation` so on-disk state stays in sync with
+    /// the in-memory view.
+    annotations: crate::annotations::Annotations,
+    /// The session file we're attached to, used to derive the notes
+    /// file path. `None` in tests and for scratch usage where writes
+    /// would have no meaningful destination.
+    session_path: Option<std::path::PathBuf>,
 }
 
 impl App {
@@ -108,6 +126,8 @@ impl App {
             show_stats: false,
             no_cost,
             session_totals: SessionTotals::default(),
+            annotations: crate::annotations::Annotations::default(),
+            session_path: None,
         };
         app.tool_stats = compute_tool_stats(&app.steps);
         app.heatmap = compute_heatmap(&app.steps);
@@ -286,6 +306,58 @@ impl App {
         let existing = self.search.clone().unwrap_or_default();
         self.input_mode = Some(InputMode::Search(existing));
         self.status_msg = None;
+    }
+
+    /// Open the annotation input for the current step. Prefills with
+    /// any existing note so `a` acts as edit-in-place when a note is
+    /// already there.
+    fn enter_annotation_mode(&mut self) {
+        let Some(view_idx) = self.list_state.selected() else {
+            self.status_msg = Some("no step selected to annotate".into());
+            return;
+        };
+        let Some(&orig_idx) = self.filtered_view.get(view_idx) else {
+            self.status_msg = Some("no step selected to annotate".into());
+            return;
+        };
+        let existing = self
+            .annotations
+            .get(orig_idx)
+            .map(|n| n.text.clone())
+            .unwrap_or_default();
+        self.input_mode = Some(InputMode::Annotation {
+            step_idx: orig_idx,
+            buffer: existing,
+        });
+        self.status_msg = None;
+    }
+
+    /// Apply an annotation buffer from input mode — upsert on non-empty
+    /// text, delete on empty. Save to disk when a session path is
+    /// bound; surface any write failure via `status_msg` rather than
+    /// panicking. Called from the Enter handler in the event loop.
+    fn save_annotation(&mut self, step_idx: usize, text: &str) {
+        let trimmed = text.trim();
+        let changed = self.annotations.set(step_idx, trimmed);
+        if let Some(path) = &self.session_path {
+            match self.annotations.save_for(path) {
+                Ok(_) => {
+                    let msg = if trimmed.is_empty() {
+                        format!("cleared annotation for step {}", step_idx + 1)
+                    } else if changed {
+                        format!("saved annotation for step {}", step_idx + 1)
+                    } else {
+                        "annotation unchanged".into()
+                    };
+                    self.status_msg = Some(msg);
+                }
+                Err(e) => {
+                    self.status_msg = Some(format!("annotation save failed: {e}"));
+                }
+            }
+        } else {
+            self.status_msg = Some("annotations not saved (no session path bound)".into());
+        }
     }
 
     fn begin_set_mark(&mut self) {
@@ -651,6 +723,7 @@ pub fn run(
     steps: Vec<Step>,
     reload_fn: Option<&dyn Fn() -> Result<Vec<Step>>>,
     no_cost: bool,
+    session_path: Option<&std::path::Path>,
 ) -> Result<()> {
     enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
@@ -659,6 +732,13 @@ pub fn run(
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
     let mut app = App::new(steps, no_cost);
+    // Attach annotation state when a session path is provided. Load is
+    // fault-tolerant: a missing or malformed notes file returns an
+    // empty `Annotations` with a stderr warning, not an error.
+    if let Some(path) = session_path {
+        app.annotations = crate::annotations::Annotations::load_for(path);
+        app.session_path = Some(path.to_path_buf());
+    }
 
     let result = run_loop(&mut terminal, &mut app, reload_fn);
     let _ = terminal.show_cursor();
@@ -747,9 +827,20 @@ fn run_loop(
                     } else if app.bg_flags.get(orig_idx).copied().unwrap_or(false) {
                         style = style.bg(ALT_BG);
                     }
-                    let batch_marker = if is_batched { "║ " } else { "  " };
+                    // Two-char prefix column. Annotations take priority
+                    // over the batch marker — they're more load-bearing
+                    // user signal (persistent, explicit) than the
+                    // derived structural batch indicator.
+                    let has_note = app.annotations.has(orig_idx);
+                    let (prefix, prefix_style) = if has_note {
+                        ("* ", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD))
+                    } else if is_batched {
+                        ("║ ", Style::default().fg(Color::DarkGray))
+                    } else {
+                        ("  ", Style::default().fg(Color::DarkGray))
+                    };
                     Some(ListItem::new(Line::from(vec![
-                        Span::styled(batch_marker, Style::default().fg(Color::DarkGray)),
+                        Span::styled(prefix, prefix_style),
                         Span::styled(s.label.as_str(), style),
                     ])))
                 })
@@ -813,52 +904,56 @@ fn run_loop(
                 f.render_stateful_widget(conv_list, conv_area, &mut app.conversation_list_state);
             }
 
-            let (detail_text, detail_kind) = app
+            let selected_orig = app
                 .list_state
                 .selected()
-                .and_then(|i| app.filtered_view.get(i).copied())
-                .and_then(|orig| app.steps.get(orig))
-                .map_or_else(
-                    || (String::new(), None),
-                    |s| {
-                        let mut text = s.detail.clone();
-                        // Prepend a metadata block when this step carries
-                        // duration / model / usage. Skipped entirely when
-                        // none of those are known.
-                        let mut meta: Vec<String> = Vec::new();
-                        if let Some(ms) = s.duration_ms {
-                            meta.push(format!("[{} since previous step]", format_duration_ms(ms)));
-                        }
-                        if let Some(m) = &s.model {
-                            meta.push(format!("[model: {m}]"));
-                        }
-                        let has_tokens = s.tokens_in.is_some()
-                            || s.tokens_out.is_some()
-                            || s.cache_read.is_some()
-                            || s.cache_create.is_some();
-                        if has_tokens {
-                            let parts: Vec<String> = [
-                                ("in", s.tokens_in),
-                                ("out", s.tokens_out),
-                                ("cache_read", s.cache_read),
-                                ("cache_create", s.cache_create),
-                            ]
-                            .iter()
-                            .filter_map(|(label, v)| v.map(|n| format!("{label}: {n}")))
-                            .collect();
-                            meta.push(format!("[tokens — {}]", parts.join(", ")));
-                        }
-                        if !app.no_cost
-                            && let Some(c) = s.cost_usd()
-                        {
-                            meta.push(format!("[estimated cost: ${c:.4} USD]"));
-                        }
-                        if !meta.is_empty() {
-                            text = format!("{}\n\n{}", meta.join("\n"), text);
-                        }
-                        (text, Some(s.kind))
-                    },
-                );
+                .and_then(|i| app.filtered_view.get(i).copied());
+            let (detail_text, detail_kind) = match selected_orig
+                .and_then(|orig| app.steps.get(orig).map(|s| (orig, s)))
+            {
+                None => (String::new(), None),
+                Some((orig, s)) => {
+                    let mut text = s.detail.clone();
+                    // Prepend a metadata block when this step carries
+                    // duration / model / usage / annotation. Skipped
+                    // entirely when none of those are known.
+                    let mut meta: Vec<String> = Vec::new();
+                    if let Some(note) = app.annotations.get(orig) {
+                        meta.push(format!("[note: {}]", note.text));
+                    }
+                    if let Some(ms) = s.duration_ms {
+                        meta.push(format!("[{} since previous step]", format_duration_ms(ms)));
+                    }
+                    if let Some(m) = &s.model {
+                        meta.push(format!("[model: {m}]"));
+                    }
+                    let has_tokens = s.tokens_in.is_some()
+                        || s.tokens_out.is_some()
+                        || s.cache_read.is_some()
+                        || s.cache_create.is_some();
+                    if has_tokens {
+                        let parts: Vec<String> = [
+                            ("in", s.tokens_in),
+                            ("out", s.tokens_out),
+                            ("cache_read", s.cache_read),
+                            ("cache_create", s.cache_create),
+                        ]
+                        .iter()
+                        .filter_map(|(label, v)| v.map(|n| format!("{label}: {n}")))
+                        .collect();
+                        meta.push(format!("[tokens — {}]", parts.join(", ")));
+                    }
+                    if !app.no_cost
+                        && let Some(c) = s.cost_usd()
+                    {
+                        meta.push(format!("[estimated cost: ${c:.4} USD]"));
+                    }
+                    if !meta.is_empty() {
+                        text = format!("{}\n\n{}", meta.join("\n"), text);
+                    }
+                    (text, Some(s.kind))
+                }
+            };
 
             let detail_title = match detail_kind {
                 Some(StepKind::UserText) => " user ",
@@ -940,6 +1035,24 @@ fn run_loop(
                                 "█",
                                 Style::default()
                                     .fg(Color::Yellow)
+                                    .add_modifier(Modifier::SLOW_BLINK),
+                            ),
+                        ]));
+                        f.render_widget(line, outer[1]);
+                    }
+                    Some(InputMode::Annotation { step_idx, buffer }) => {
+                        let line = Paragraph::new(Line::from(vec![
+                            Span::styled(
+                                format!("note step {}> ", step_idx + 1),
+                                Style::default()
+                                    .fg(Color::Magenta)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                            Span::raw(buffer.as_str()),
+                            Span::styled(
+                                "█",
+                                Style::default()
+                                    .fg(Color::Magenta)
                                     .add_modifier(Modifier::SLOW_BLINK),
                             ),
                         ]));
@@ -1039,6 +1152,7 @@ fn run_loop(
                         "Other",
                         Style::default().add_modifier(Modifier::BOLD),
                     )),
+                    Line::from("  a               add / edit / clear annotation on current step (saved to ~/.agx/notes/)"),
                     Line::from("  y               copy current step to clipboard"),
                     Line::from("  h               toggle heatmap mode (tool-call density)"),
                     Line::from("  ? / F1          toggle this help"),
@@ -1084,6 +1198,14 @@ fn run_loop(
                         Span::raw("  "),
                         Span::styled("║      ", Style::default().fg(Color::DarkGray)),
                         Span::raw("part of a batched parallel tool call"),
+                    ]),
+                    Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled(
+                            "*      ",
+                            Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw("has an annotation (see `a` keybinding)"),
                     ]),
                     Line::from(""),
                     Line::from(Span::styled(
@@ -1276,6 +1398,9 @@ fn run_loop(
                             Some(InputMode::Command(buf)) => app.execute_command(&buf),
                             Some(InputMode::Filter(buf)) => app.apply_filter(&buf),
                             Some(InputMode::Search(buf)) => app.apply_search(&buf),
+                            Some(InputMode::Annotation { step_idx, buffer }) => {
+                                app.save_annotation(step_idx, &buffer);
+                            }
                             None => {}
                         }
                     }
@@ -1283,7 +1408,8 @@ fn run_loop(
                         if let Some(
                             InputMode::Command(buf)
                             | InputMode::Filter(buf)
-                            | InputMode::Search(buf),
+                            | InputMode::Search(buf)
+                            | InputMode::Annotation { buffer: buf, .. },
                         ) = &mut app.input_mode
                         {
                             buf.pop();
@@ -1293,7 +1419,8 @@ fn run_loop(
                         if let Some(
                             InputMode::Command(buf)
                             | InputMode::Filter(buf)
-                            | InputMode::Search(buf),
+                            | InputMode::Search(buf)
+                            | InputMode::Annotation { buffer: buf, .. },
                         ) = &mut app.input_mode
                         {
                             buf.push(c);
@@ -1333,6 +1460,10 @@ fn run_loop(
                 KeyCode::Char('/') => {
                     app.clear_count();
                     app.enter_search_mode();
+                }
+                KeyCode::Char('a') => {
+                    app.clear_count();
+                    app.enter_annotation_mode();
                 }
                 KeyCode::Char('n') => {
                     let n = app.take_count();

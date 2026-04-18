@@ -657,15 +657,41 @@ diff, deeper search, and notes that survive session edits.
       days; would require a date prefix or day-of-session heuristic).
       `..=` inclusive-end range syntax (trivial add when asked for).
 
-**4.3 — Annotations**
-- [ ] `a` in TUI opens annotation prompt for current step
-- [ ] Stored in `.agx/<session-id>.notes.json` sibling to session file;
-      falls back to `~/.agx/notes/<session-id>.json` if sibling write fails
-- [ ] Rendered as a marginal indicator in the timeline (ASCII-only `*`
-      prefix — no emoji per "terminal-native" principle)
-- [ ] `A` opens annotation list overlay for current session
-- [ ] Exports carry annotations (Phase 1.4 md/html/json)
-- [ ] `agx corpus` aggregate: "sessions with annotations" filter
+**4.3 — Annotations** (MVP shipped; overlay + export + corpus filter deferred)
+- [x] `a` in the TUI opens an annotation prompt for the selected
+      step. Prefills with the existing note for edit-in-place, or
+      opens blank for new notes. Enter upserts, empty text deletes,
+      Esc discards.
+- [x] Storage: `~/.agx/notes/<session-stem>-<fnv1a-hash8>.json`.
+      Decided against the sibling `.agx/` + home-dir-fallback scheme
+      — single location keeps retrieval logic trivial and is more
+      portable across workstations where users mount session dirs
+      read-only or from different machines. Override via `AGX_HOME`
+      env var (used by the test suite).
+- [x] Keyed by FNV-1a of the canonical path. Hand-rolled FNV keeps
+      hashes deterministic across agx invocations (std's hashmap
+      hasher has a random seed per process) and adds zero deps.
+- [x] Atomic writes via temp-file + `rename(2)`. Corrupted notes
+      files are reported to stderr and silently dropped rather than
+      preventing the TUI from launching.
+- [x] Rendered as a magenta `*` prefix on annotated rows in the
+      timeline list. Takes precedence over the `║` batch marker
+      when both apply (annotations are more load-bearing user
+      signal than derived structure). Detail pane prepends a
+      `[note: ...]` meta line.
+- [x] Help overlay updated with the `a` keybinding and the color
+      legend entry.
+- [x] 12 unit tests for the annotations module (empty / upsert /
+      trim / delete-on-empty / idempotent-identity / updated_at
+      refresh / numeric-order iter / round-trip save+load /
+      missing-file-tolerance / malformed-file-tolerance / filename
+      format / hash determinism). Race-safe via a module-local
+      `Mutex<()>` around `AGX_HOME` writes since `cargo test` runs
+      in parallel by default.
+- [ ] **Deferred** (tracked as 4.3 follow-ups):
+      - `A` list-overlay showing all annotations + jump-to
+      - Export integration: notes in md/html/json output
+      - `agx corpus --filter annotated` predicate
 
 **4.4 — Semantic search (opt-in feature flag)**
 - [ ] `--features embedding-search` compile flag, default off
