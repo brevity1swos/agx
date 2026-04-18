@@ -110,14 +110,25 @@ pub enum AssistantContentItem {
 }
 
 pub fn load(path: &Path) -> Result<Vec<Entry>> {
-    let content = std::fs::read_to_string(path)
-        .with_context(|| format!("reading session file: {}", path.display()))?;
+    // Line-stream via BufReader so we never hold the whole file in memory
+    // as a single String — a Claude Code session can be 50MB+ of JSONL,
+    // and the old `read_to_string` + `.lines()` path materialized the
+    // entire buffer just to iterate over it. BufReader keeps the working
+    // set bounded by the longest single line (typically a few KB) while
+    // still giving us accurate line-number context for format-drift
+    // error messages.
+    use std::fs::File;
+    use std::io::{BufRead, BufReader};
+    let file =
+        File::open(path).with_context(|| format!("opening session file: {}", path.display()))?;
+    let reader = BufReader::new(file);
     let mut entries = Vec::with_capacity(1024);
-    for (i, line) in content.lines().enumerate() {
+    for (i, line) in reader.lines().enumerate() {
+        let line = line.with_context(|| format!("reading line {} of session file", i + 1))?;
         if line.trim().is_empty() {
             continue;
         }
-        let entry: Entry = serde_json::from_str(line)
+        let entry: Entry = serde_json::from_str(&line)
             .with_context(|| format!("parsing line {} of session file", i + 1))?;
         entries.push(entry);
     }

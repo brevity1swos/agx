@@ -18,17 +18,25 @@ struct Entry {
 }
 
 pub fn load(path: &Path) -> Result<Vec<Step>> {
-    let content = std::fs::read_to_string(path)
-        .with_context(|| format!("reading codex session file: {}", path.display()))?;
-    let entries: Vec<Entry> = content
-        .lines()
-        .enumerate()
-        .filter(|(_, l)| !l.trim().is_empty())
-        .map(|(i, line)| {
-            serde_json::from_str::<Entry>(line)
-                .with_context(|| format!("parsing line {} of codex session", i + 1))
-        })
-        .collect::<Result<Vec<_>>>()?;
+    // Line-stream via BufReader (same rationale as session.rs). Codex
+    // rollouts in the wild routinely grow past 10MB of JSONL; holding
+    // the whole file as a `String` just to call `.lines()` on it was
+    // pure waste.
+    use std::fs::File;
+    use std::io::{BufRead, BufReader};
+    let file = File::open(path)
+        .with_context(|| format!("opening codex session file: {}", path.display()))?;
+    let reader = BufReader::new(file);
+    let mut entries: Vec<Entry> = Vec::with_capacity(1024);
+    for (i, line) in reader.lines().enumerate() {
+        let line = line.with_context(|| format!("reading line {} of codex session", i + 1))?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let entry = serde_json::from_str::<Entry>(&line)
+            .with_context(|| format!("parsing line {} of codex session", i + 1))?;
+        entries.push(entry);
+    }
 
     let tool_meta = collect_tool_meta(&entries);
     let mut steps = Vec::new();

@@ -70,6 +70,11 @@ struct Cli {
     #[arg(long, value_enum, value_name = "FORMAT")]
     export: Option<ExportFormat>,
 
+    /// Print load / parse / render timing breakdown to stderr. Hidden
+    /// diagnostic flag for performance-regression reports.
+    #[arg(long, hide = true)]
+    bench: bool,
+
     /// Optional subcommand. When present, overrides the single-session
     /// flow. Today only `corpus` exists — it aggregates stats across
     /// every session file in a directory tree.
@@ -110,6 +115,10 @@ struct CorpusArgs {
     /// `~/.claude`, Codex at depth 5 from `~/.codex`, etc.).
     #[arg(long, default_value_t = 8)]
     max_depth: usize,
+
+    /// Print walk / load / aggregate timing breakdown to stderr.
+    #[arg(long, hide = true)]
+    bench: bool,
 }
 
 // `load_session` itself lives in src/loader.rs so both the single-session
@@ -208,6 +217,7 @@ fn main() -> Result<()> {
             json: args.json,
             no_cost: args.no_cost,
             max_depth: args.max_depth,
+            bench: args.bench,
         };
         return corpus::run(&corpus_args);
     }
@@ -232,7 +242,18 @@ fn main() -> Result<()> {
         report.print(&mut std::io::stderr())?;
     }
 
+    // Bench timing wraps the whole load path so users filing perf issues
+    // can attach a concrete number. Writes to stderr so stdout stays
+    // pipeable for --summary / --export.
+    let load_start = std::time::Instant::now();
     let steps = load_session(&session_path)?;
+    if cli.bench {
+        eprintln!(
+            "[bench] load: {:.2}ms ({} steps)",
+            load_start.elapsed().as_secs_f64() * 1000.0,
+            steps.len()
+        );
+    }
 
     if let Some(diff_path) = &cli.diff {
         let steps_b = load_session(diff_path)?;

@@ -344,27 +344,50 @@ pub struct CorpusArgs {
     pub json: bool,
     pub no_cost: bool,
     pub max_depth: usize,
+    /// When true, emit walk / load / aggregate timings to stderr after
+    /// the main output. Wired from the hidden `--bench` CLI flag.
+    pub bench: bool,
 }
 
 /// Entry point called from `main.rs::main`. Walks the directory, loads
 /// every session in parallel, applies filters, aggregates, and prints.
 pub fn run(args: &CorpusArgs) -> Result<()> {
+    use std::time::Instant;
+    let t_walk = Instant::now();
     let files = discover_files(&args.dir, args.max_depth);
     let file_count = files.len();
-    let (mut parsed, errors) = load_parallel(&files);
+    let walk_ms = t_walk.elapsed().as_secs_f64() * 1000.0;
 
+    let t_load = Instant::now();
+    let (mut parsed, errors) = load_parallel(&files);
+    let load_ms = t_load.elapsed().as_secs_f64() * 1000.0;
+
+    let t_agg = Instant::now();
     let before_filter = parsed.len();
     if !args.filters.is_empty() {
         parsed.retain(|p| args.filters.iter().all(|f| f.matches(p)));
     }
     let filtered_out = before_filter - parsed.len();
-
     let stats = aggregate(&parsed, &errors, file_count, filtered_out);
+    let agg_ms = t_agg.elapsed().as_secs_f64() * 1000.0;
 
     if args.json {
         println!("{}", serde_json::to_string_pretty(&stats)?);
     } else {
         print_text_summary(&stats, &args.dir, args.no_cost, &errors);
+    }
+
+    if args.bench {
+        eprintln!(
+            "[bench] walk: {:.2}ms ({} files)  load: {:.2}ms ({} parsed, {} errored)  aggregate: {:.2}ms  total: {:.2}ms",
+            walk_ms,
+            file_count,
+            load_ms,
+            stats.parse_success_count,
+            stats.parse_error_count,
+            agg_ms,
+            walk_ms + load_ms + agg_ms,
+        );
     }
     Ok(())
 }

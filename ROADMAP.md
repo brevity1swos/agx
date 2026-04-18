@@ -476,18 +476,39 @@ build around agx instead of with it.
       that agx's current `Step.duration_ms` doesn't provide), and
       sessions/day histogram (needs timestamp-binning infrastructure).
 
-**3.2 — Performance pass**
-- [ ] Benchmark baseline on a large real session (~50MB JSONL, ~2000
-      steps) using `criterion`; target: <1s wall time for `--summary`
-- [ ] Replace `serde_json::from_str(&entire_file)` with line-streaming
-      `Deserializer::from_reader` where not already used
-- [ ] Avoid cloning `Step.detail` strings when rendering; intern repeated
-      tool names via a small string-table in `App`
-- [ ] Lazy detail expansion: timeline list holds only label + kind +
-      offsets; detail pane reads from backing buffer on select
-- [ ] Memory ceiling: document the target (~3x file size resident for
-      Claude Code JSONL) and regression-test it
-- [ ] `--bench` hidden flag prints load + parse timings for diagnostics
+**3.2 — Performance pass** (in progress)
+- [x] Line-streaming read for both JSONL parsers (`session.rs` and
+      `codex.rs`) via `BufReader::lines()`. Previously both did
+      `read_to_string` + `.lines()`, which materialized the full file
+      as a single `String` before iterating — for a 50MB session that's
+      50MB of string memory held just to walk over it. The new path
+      keeps peak working set bounded by the longest single line
+      (typically a few KB). Line-number context is preserved for
+      format-drift error messages. Gemini / Generic / LangChain /
+      Vercel / OTel-JSON parsers still use `read_to_string` because
+      those formats are single-JSON-object files where streaming
+      gains nothing.
+- [x] `--bench` hidden flag prints load / walk / aggregate timings to
+      stderr. Works on both the single-session flow
+      (`agx --bench --summary foo.jsonl` → `[bench] load: 1.09ms
+      (11 steps)`) and the corpus subcommand (`agx corpus --bench dir/`
+      → `[bench] walk: 0.11ms (9 files)  load: 1.22ms (7 parsed, 0
+      errored)  aggregate: 0.01ms  total: 1.34ms`). stdout stays
+      clean for piping.
+- [x] Memory-target note added to CLAUDE.md's "Key patterns" section
+      so future contributors don't regress the streaming path back to
+      `read_to_string`.
+- [ ] `criterion` benchmarks (needs a `src/lib.rs` shim so the
+      `benches/` crate can import parsers). Separate commit — touches
+      workspace shape, better kept isolated.
+- [ ] Tool-name interning in `App` + lazy detail expansion
+      (`Step.detail` held as offset + length into the file buffer
+      instead of an owned `String`). Separate commit — crosses the
+      TUI / parser boundary and is the biggest win for very large
+      sessions.
+- [ ] Regression test for the ~3× file-size memory ceiling. Needs
+      `criterion` + a large synthetic fixture — tracked alongside
+      the benchmark commit.
 
 **3.3 — Corpus TUI view**
 - [ ] `agx corpus --tui <dir>` launches an overview TUI: session list
