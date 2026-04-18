@@ -3,6 +3,11 @@ mod codex;
 mod corpus;
 mod corpus_tui;
 mod debug_unknowns;
+// `diff_align` is Phase 4.1 part 1 — the pure-algorithm alignment module.
+// The TUI that consumes it (`diff_tui.rs`) lands in a follow-up commit
+// and will remove the need for this allow.
+#[allow(dead_code)]
+mod diff_align;
 mod export;
 mod format;
 mod gemini;

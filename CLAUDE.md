@@ -43,6 +43,7 @@ src/
 ├── loader.rs           # `load_session(path)` — format dispatch front door shared by single-session and corpus flows
 ├── corpus.rs           # `agx corpus <dir>` subcommand: parallel rayon parse, aggregate, filter, text/json output
 ├── corpus_tui.rs       # `agx corpus --tui <dir>` interactive two-pane TUI (list + detail, drills into per-session tui.rs)
+├── diff_align.rs       # Phase 4.1 pure alignment: LCS over (kind, tool_name) → Vec<AlignRow> for session-to-session diff
 ├── timeline.rs         # Shared Step / StepKind / Usage / SessionTotals + step helpers + compute_* functions
 ├── pricing.rs          # Per-model USD rate table + Step::cost_usd delegation target
 ├── export.rs           # Markdown / HTML / JSON transcript writers (String-returning, no I/O)

@@ -581,24 +581,38 @@ added because corpus on slow parsers is unusable.
 
 ---
 
-## Phase 4 — v0.5: Diff, Search Depth, Annotations
+## Phase 4 — v0.5: Diff, Search Depth, Annotations (in progress)
 
 **Goal:** Turn agx from a viewer into an analysis tool. Real side-by-side
 diff, deeper search, and notes that survive session edits.
 
 ### Subplans
 
-**4.1 — Interactive side-by-side diff**
-- [ ] `--diff-tui` mode: two timelines in parallel panes, synchronized
-      scrolling, single cursor walking aligned pairs
-- [ ] Alignment: match by `(tool_name, normalized_input)` first, fall back
-      to position; show gray gutters where only one side has a step
-- [ ] Color-code: green = match, yellow = input differs, red = outcome
-      differs, gray = only-in-one-side
-- [ ] `j`/`k` walk aligned pairs, `Tab` jumps to next unaligned-only step,
-      `d` toggles inline diff of detail pane
-- [ ] Unit test: synthetic pair where both sessions do "write fib.py"
-      with minor input variance aligns correctly
+**4.1 — Interactive side-by-side diff** (part 1 of 2 shipped)
+- [x] Pure-algorithm alignment module (`src/diff_align.rs`) —
+      longest-common-subsequence over a structural `Sig` (step kind +
+      tool name), no TUI deps. O(N·M) DP with backtrack; fine for
+      typical session sizes (<2k steps). Hunt-Szymanski / Myers are
+      left for later if per-session step counts start hitting 10k+.
+- [x] `AlignRow { left: Option<usize>, right: Option<usize>, kind }`
+      with `AlignKind::{Match, Differ, LeftOnly, RightOnly}`. Match =
+      same kind + tool + detail text; Differ = same kind + tool but
+      content drifted; LeftOnly / RightOnly = unpaired gaps.
+- [x] 10 unit tests cover: identical sequences all-Match, empty
+      inputs, one-sided emptiness, extra-tool-call on one side
+      becomes RightOnly rows, same-structure / different-text produces
+      Differ, different tool names at same position split into
+      one-sided gaps, same-tool-different-input becomes Differ,
+      reordered tool calls produce 1 pair + 2 gaps, LCS-picks-longer
+      behavior over equivalent-signature ties.
+- [ ] **Part 2 (next commit)**: `src/diff_tui.rs` — two-pane ratatui
+      rendering of the alignment, `--diff-tui` CLI flag on the
+      top-level (requires `--diff <path>`), synchronized scrolling,
+      j/k/g/G/Home/End/PgUp/PgDn navigation, ?/F1 help, q/Esc quit.
+      Color-code rows by AlignKind.
+- [ ] **Later extensions**: `Tab` jumps to next unaligned-only row,
+      `d` toggles inline diff of the selected row's detail, drill-in
+      from a diff row into the single-session TUI on either side.
 
 **4.2 — Jump-to-time + trim**
 - [ ] `:@HH:MM:SS` / `:@12:34` jumps to first step at-or-after that time
