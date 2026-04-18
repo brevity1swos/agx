@@ -208,7 +208,7 @@ unpriced custom models) who don't want cost estimation at all.
 
 ---
 
-## Phase 2 — v0.3: OpenTelemetry GenAI + Framework Traces (in progress)
+## Phase 2 — v0.3: OpenTelemetry GenAI + Framework Traces ✅ (shipped 2026-04-18)
 
 **Goal:** Capture the framework-level audience in one move. Support OTel
 GenAI semconv as a first-class format and ship parsers for the three or
@@ -366,18 +366,44 @@ biggest leverage point in the roadmap.
       `tool-invocation` items — different idiom, will wire when a real
       fixture lands in `tests/corpus/vercel_ai/`
 
-**2.5 — LlamaIndex + Pydantic AI quick wins**
-- [ ] LlamaIndex: most LlamaIndex users export via OTel already (covered by
-      2.1); add a targeted path only if a different native format shows up
-      in fixture contributions
-- [ ] Pydantic AI: parse the `agent.run_sync()` log shape if / when users
-      contribute fixtures — otherwise punt to Phase 8 long-tail
+**2.5 — LlamaIndex + Pydantic AI quick wins** ✅ (no new parser needed)
+- [x] LlamaIndex: inventory pass confirmed OTel is the default export
+      path for every LlamaIndex instrumentation we could find
+      (`llama-index-instrumentation-openinference`, `arize-phoenix`
+      callbacks, Traceloop's OpenLLMetry SDK all emit OTel GenAI). Any
+      trace from those paths lands in `otel_json.rs` / `otel_proto.rs`
+      already. No native parser justified until a non-OTel fixture
+      contribution shows up.
+- [x] Pydantic AI: same story — the default `logfire` / OTel path
+      covers the `agent.run_sync()` log shape. Native parser deferred
+      to Phase 8 long-tail if a user files a fixture showing a non-OTel
+      save format.
+- [x] Decision documented in this roadmap entry so future-me doesn't
+      re-litigate it without new evidence.
 
-**2.6 — Detection reshuffle**
-- [ ] `format::detect` now probes in order: Gemini single-object →
-      Codex → OtelJson → LangChain → VercelAI → ClaudeCode → Generic
-- [ ] Content-based only; still no extension sniffing
-- [ ] Add detection unit tests covering each new format's disambiguator
+**2.6 — Detection reshuffle** ✅
+- [x] `format::detect` order documented as a docstring at the top of
+      the function with the full probe sequence:
+      non-UTF-8 → OtelProto; single JSON {resourceSpans → OtelJson;
+      run_type+inputs/outputs → Langchain; Vercel markers → VercelAi;
+      sessionId+messages → Gemini; bare messages → Generic}; JSONL
+      first-line type → Codex vs ClaudeCode.
+- [x] Order preserves the "most specific first" rule — Vercel's
+      `finishReason`/`stepType`/camelCase-toolCallId is checked
+      before Gemini and Generic so AI SDK saves that also happen to
+      contain `messages` don't misroute.
+- [x] Content-based only; extension sniffing still forbidden.
+- [x] Unit tests now cover every disambiguator: ClaudeCode by first
+      line, Codex by session_meta and response_item, Gemini by
+      sessionId+messages, Generic by bare messages, Langchain by
+      run_type+inputs, Vercel by finishReason / stepType /
+      camelCase-toolCallId, OtelJson by resourceSpans, OtelProto by
+      non-UTF-8 bytes. Plus negative tests: Generic falls through when
+      Vercel markers are absent; partial Langchain markers
+      (run_type alone, no inputs/outputs) fall through to Generic.
+- [x] All five other files that match on `Format` (main.rs dispatch,
+      browser.rs tag, debug_unknowns.rs scan, otel_proto.rs gate,
+      vercel_ai.rs detection helper) kept in sync with the enum.
 
 **Acceptance:** a LangChain-over-OTel trace from a user's local
 `otel-desktop-viewer` dump loads in agx with the same TUI shape as a

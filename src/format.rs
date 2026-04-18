@@ -30,6 +30,28 @@ impl fmt::Display for Format {
     }
 }
 
+/// Detect the format of a session file by inspecting its content shape.
+/// Content-based only — no file-extension sniffing, because agx tools in
+/// the wild all use vanilla `.json` / `.jsonl` extensions regardless of
+/// which agent CLI produced them.
+///
+/// Probe order (most specific first, so ambiguous shapes land on the
+/// right parser):
+///
+/// - Non-UTF-8 bytes → [`Format::OtelProto`] (binary OTLP)
+/// - Single JSON with `resourceSpans` → [`Format::OtelJson`]
+/// - Single JSON with `run_type` + `inputs`/`outputs` → [`Format::Langchain`]
+/// - Single JSON with `finishReason` / `steps[].stepType` / camelCase `toolCallId` → [`Format::VercelAi`]
+/// - Single JSON with `sessionId` + `messages` → [`Format::Gemini`]
+/// - Single JSON with bare `messages` → [`Format::Generic`]
+/// - JSONL first-line `type` in `session_meta` / `event_msg` / `response_item` / `turn_context` → [`Format::Codex`]
+/// - Anything else → [`Format::ClaudeCode`]
+///
+/// The ordering matters. For example, a Vercel AI SDK save has
+/// `messages` at the top level (which would otherwise match Generic),
+/// so the Vercel-specific markers (`finishReason` / `stepType` /
+/// camelCase `toolCallId`) are checked first. Same story for LangChain
+/// exports that happen to include a `messages` field under `inputs`.
 pub fn detect(path: &Path) -> Result<Format> {
     // Read bytes first so we can distinguish text formats from binary OTLP.
     // `read_to_string` used to be enough when all supported formats were
@@ -156,6 +178,33 @@ mod tests {
             r#"{"timestamp":"2024-01-01T00:00:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}}"#,
         );
         assert_eq!(detect(f.path()).unwrap(), Format::Codex);
+    }
+
+    #[test]
+    fn detects_otel_json_by_resource_spans_key() {
+        // Minimal OTLP-JSON: any top-level object with `resourceSpans` is
+        // unambiguously OTel, independent of what's inside.
+        let f = write_file(r#"{"resourceSpans":[]}"#);
+        assert_eq!(detect(f.path()).unwrap(), Format::OtelJson);
+    }
+
+    #[test]
+    fn detects_generic_by_bare_messages_only() {
+        // Pure OpenAI-compatible conversation: `messages` but none of the
+        // format-specific markers that Vercel / Gemini / LangChain need.
+        let f = write_file(
+            r#"{"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"}]}"#,
+        );
+        assert_eq!(detect(f.path()).unwrap(), Format::Generic);
+    }
+
+    #[test]
+    fn langchain_requires_inputs_or_outputs_alongside_run_type() {
+        // A single `run_type` field without inputs/outputs is probably a
+        // partial or unrelated object — fall through rather than misroute
+        // to LangChain. Adding a bare `messages` so something catches.
+        let f = write_file(r#"{"run_type":"chain","messages":[{"role":"user","content":"hi"}]}"#);
+        assert_eq!(detect(f.path()).unwrap(), Format::Generic);
     }
 
     #[test]
