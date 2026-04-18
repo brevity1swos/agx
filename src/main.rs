@@ -123,9 +123,21 @@ struct CorpusArgs {
 
     /// Launch the interactive corpus TUI — session list + selected-session
     /// summary + drill-in to per-session step-through. Mutually exclusive
-    /// with `--json` (TUI owns the terminal; JSON needs stdout clean).
-    #[arg(long, conflicts_with = "json")]
+    /// with `--json` / `--jsonl` (TUI owns the terminal).
+    #[arg(long, conflicts_with_all = ["json", "jsonl"])]
     tui: bool,
+
+    /// Emit one JSON object per session to stdout (line-delimited JSON,
+    /// not pretty-printed). Parse errors go to stderr. Pipe into `jq`
+    /// / `xargs` / a file for eval or CI pipelines.
+    #[arg(long, conflicts_with = "json")]
+    jsonl: bool,
+
+    /// Exit with a nonzero status when any parse error or any tool-error
+    /// result is present in the corpus. Orthogonal to rendering mode;
+    /// combine with any of --json / --jsonl / --tui / default text.
+    #[arg(long)]
+    fail_on_errored: bool,
 }
 
 // `load_session` itself lives in src/loader.rs so both the single-session
@@ -226,6 +238,8 @@ fn main() -> Result<()> {
             max_depth: args.max_depth,
             bench: args.bench,
             tui: args.tui,
+            jsonl: args.jsonl,
+            fail_on_errored: args.fail_on_errored,
         };
         return corpus::run(&corpus_args);
     }

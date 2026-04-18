@@ -108,6 +108,8 @@ agx corpus <dir>
 agx corpus <dir> --filter model=claude-opus-4-6 --filter tool=Bash
 agx corpus <dir> --filter errored --json       # pretty-printed stats JSON
 agx corpus <dir> --tui                         # interactive browser: list + detail, Enter drills in
+agx corpus <dir> --jsonl | jq '.cost_usd'      # one JSON-per-session on stdout; parse errors on stderr
+agx corpus <dir> --fail-on-errored             # exit nonzero if any parse error / tool error — CI-friendly
 ```
 
 ## Use on your own sessions

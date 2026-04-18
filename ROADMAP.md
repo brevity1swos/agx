@@ -423,7 +423,7 @@ it up front-loads the biggest audience expansion of the roadmap.
 
 ---
 
-## Phase 3 — v0.4: Corpus Analysis & Performance (in progress)
+## Phase 3 — v0.4: Corpus Analysis & Performance (core subplans shipped 2026-04-18)
 
 **Goal:** Let a researcher or eval engineer point agx at 10,000 trajectories
 and get answers in seconds. Two intertwined concerns — cross-session
@@ -542,11 +542,30 @@ build around agx instead of with it.
 - [ ] **Deferred**: in-TUI filter/search. The CLI `--filter` already
       covers the main use case; live filtering could come later.
 
-**3.4 — Eval-loop integration**
-- [ ] `agx corpus <dir> --json-lines` streams one JSON per session as they
-      parse (eval pipelines can `tail -f` this)
-- [ ] Exit code reflects "any session errored" when `--fail-on-errored` is
-      set — lets CI pipelines gate on agent health
+**3.4 — Eval-loop integration** ✅
+- [x] `agx corpus <dir> --jsonl` emits one JSON object per session to
+      stdout (compact, line-delimited, not pretty-printed). Schema is a
+      dedicated `SessionLine` struct — flat / stable / downstream-safe.
+      Parse errors go to stderr so `--jsonl | jq` etc. don't see
+      corrupted output. Named `--jsonl` to match the extension
+      convention and avoid ambiguity with `--json` (the pretty-printed
+      aggregate variant).
+- [x] `agx corpus <dir> --fail-on-errored` exits with a nonzero status
+      (code 1 via anyhow — simpler than carving out a dedicated 2)
+      when any parse error OR any is_error_result tool_result is
+      present in the corpus. Orthogonal to rendering mode: combines
+      cleanly with `--json` / `--jsonl` / `--tui` / default text.
+- [x] Clap-level `conflicts_with_all = ["json", "jsonl"]` on `--tui`
+      and `conflicts_with = "json"` on `--jsonl` — prevents nonsensical
+      "TUI owns terminal but also stdout-JSON" combinations at parse
+      time rather than runtime.
+- [x] End-to-end verified: `--jsonl` produces valid one-JSON-per-line
+      output parseable by Python `json.loads`; `--fail-on-errored`
+      exits 0 on a clean corpus (asserted via shell `$?`).
+- [ ] **Deferred** (low priority): true streaming during parallel parse
+      via a channel + print thread so `tail -f` actually shows lines as
+      they complete parsing. Current implementation collects first, then
+      prints — fine for small-to-medium corpora; upgrade if users ask.
 
 **Acceptance:** `agx corpus ~/.claude/projects/` on a 30-day corpus of a
 few hundred sessions returns a summary in under 5 seconds, the corpus TUI

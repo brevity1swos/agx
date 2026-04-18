@@ -360,6 +360,15 @@ pub struct CorpusArgs {
     /// Mutually exclusive with `--json` (the TUI owns the terminal; JSON
     /// needs stdout clean).
     pub tui: bool,
+    /// When true, emit one JSON object per session to stdout instead of
+    /// the default text summary or the aggregate `--json` blob. Parse
+    /// errors go to stderr so stdout stays pipeable into `jq` / `xargs`.
+    /// Intended for CI / eval pipelines.
+    pub jsonl: bool,
+    /// When true, exit with code 2 if any parse failure occurred OR any
+    /// tool_result across the corpus matched the is_error_result
+    /// heuristic. Exit 0 otherwise. Orthogonal to the rendering mode.
+    pub fail_on_errored: bool,
 }
 
 /// Entry point called from `main.rs::main`. Walks the directory, loads
@@ -384,15 +393,46 @@ pub fn run(args: &CorpusArgs) -> Result<()> {
     let stats = aggregate(&parsed, &errors, file_count, filtered_out);
     let agg_ms = t_agg.elapsed().as_secs_f64() * 1000.0;
 
+    // `--fail-on-errored` turns parse errors or tool-level error_results
+    // into a nonzero exit. Evaluated before the rendering branch so we
+    // don't have to clone `parsed` — the TUI path takes it by value.
+    // The rendering side effects still run; the fail is reported at the
+    // end via `anyhow::bail` (exit code 1 via anyhow's normal error
+    // path — simpler than reserving a distinct code 2 and bypassing
+    // anyhow's reporting for this one case).
+    let fail_on_errored = args.fail_on_errored && {
+        let tool_errors: usize = parsed
+            .iter()
+            .flat_map(|p| p.tool_stats.iter())
+            .map(|t| t.error_count)
+            .sum();
+        !errors.is_empty() || tool_errors > 0
+    };
+    let parse_error_count = errors.len();
+    let tool_error_count: usize = parsed
+        .iter()
+        .flat_map(|p| p.tool_stats.iter())
+        .map(|t| t.error_count)
+        .sum();
+
     if args.tui {
         // Drop into the interactive corpus TUI. When the user selects a
         // session and hits Enter, the outer loop re-runs the TUI after
         // the drill-in per-session TUI exits.
         crate::corpus_tui::run(parsed, &stats, args.no_cost)?;
+    } else if args.jsonl {
+        print_jsonl(&parsed, &errors);
     } else if args.json {
         println!("{}", serde_json::to_string_pretty(&stats)?);
     } else {
         print_text_summary(&stats, &args.dir, args.no_cost, &errors);
+    }
+
+    if fail_on_errored {
+        anyhow::bail!(
+            "--fail-on-errored: {parse_error_count} parse error(s), \
+             {tool_error_count} tool-error result(s) detected",
+        );
     }
 
     if args.bench {
@@ -487,6 +527,74 @@ fn print_text_summary(stats: &CorpusStats, dir: &Path, no_cost: bool, errors: &[
         if errors.len() > 5 {
             println!("  ... ({} more)", errors.len() - 5);
         }
+    }
+}
+
+/// JSON-Lines output: one session per line on stdout, parse errors to
+/// stderr. Schema intentionally flat and stable — downstream eval
+/// pipelines can rely on these field names.
+#[derive(serde::Serialize)]
+struct SessionLine {
+    path: String,
+    format: String,
+    step_count: usize,
+    tokens_in: u64,
+    tokens_out: u64,
+    cache_read: u64,
+    cache_create: u64,
+    cost_usd: Option<f64>,
+    models: Vec<String>,
+    tool_counts: Vec<ToolLine>,
+    error_count: usize,
+    mtime_secs: Option<u64>,
+}
+
+#[derive(serde::Serialize)]
+struct ToolLine {
+    name: String,
+    use_count: usize,
+    error_count: usize,
+}
+
+fn session_to_line(s: &ParsedSession) -> SessionLine {
+    SessionLine {
+        path: s.path.display().to_string(),
+        format: s.format.to_string(),
+        step_count: s.step_count,
+        tokens_in: s.totals.tokens_in,
+        tokens_out: s.totals.tokens_out,
+        cache_read: s.totals.cache_read,
+        cache_create: s.totals.cache_create,
+        cost_usd: s.totals.cost_usd,
+        models: s.totals.unique_models.clone(),
+        tool_counts: s
+            .tool_stats
+            .iter()
+            .map(|t| ToolLine {
+                name: t.name.clone(),
+                use_count: t.use_count,
+                error_count: t.error_count,
+            })
+            .collect(),
+        error_count: s.tool_stats.iter().map(|t| t.error_count).sum(),
+        mtime_secs: s.mtime_secs,
+    }
+}
+
+fn print_jsonl(parsed: &[ParsedSession], errors: &[ParseError]) {
+    // Sessions on stdout, one line each — compact (not pretty) so
+    // downstream `jq -c` / `xargs` consumers see line-delimited JSON.
+    for session in parsed {
+        let line = session_to_line(session);
+        match serde_json::to_string(&line) {
+            Ok(s) => println!("{s}"),
+            Err(e) => eprintln!("agx: failed to serialize session line: {e}"),
+        }
+    }
+    // Parse errors on stderr so they don't corrupt the stdout stream
+    // that consumers are piping into jq / xargs / a file.
+    for err in errors {
+        eprintln!("agx: parse error: {}: {}", err.path.display(), err.error);
     }
 }
 
