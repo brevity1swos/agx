@@ -101,6 +101,9 @@ agx --after-step 100 --before-step 500 <session>
 agx --after 30m --before 1h <session>       # Duration grammar: 30s / 5m / 2h / 1d, or compounds like 1h30m
 # Inside the TUI: `:@1h30m` jumps to the first step ≥ that offset from session start
 
+# Annotate a step: press `a` in the TUI. Notes persist under ~/.agx/notes/
+# and render as a magenta `*` prefix in the list + `[note: ...]` in the detail pane.
+
 # Export a transcript to stdout — formats: md | html | json
 agx --export md   <session> > session.md
 agx --export html <session> > session.html
