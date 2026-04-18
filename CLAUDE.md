@@ -40,6 +40,8 @@ src/
 ├── otel_json.rs        # OpenTelemetry GenAI JSON parser (OTLP-JSON envelope + gen_ai.* semconv)
 ├── otel_proto.rs       # Binary OTLP parser (.pb/.otlp) — feature-gated behind `otel-proto`
 ├── vercel_ai.rs        # Vercel AI SDK `generateText` / `streamText` result parser (camelCase tool fields, steps[])
+├── loader.rs           # `load_session(path)` — format dispatch front door shared by single-session and corpus flows
+├── corpus.rs           # `agx corpus <dir>` subcommand: parallel rayon parse, aggregate, filter, text/json output
 ├── timeline.rs         # Shared Step / StepKind / Usage / SessionTotals + step helpers + compute_* functions
 ├── pricing.rs          # Per-model USD rate table + Step::cost_usd delegation target
 ├── export.rs           # Markdown / HTML / JSON transcript writers (String-returning, no I/O)
@@ -69,6 +71,7 @@ src/
 - **Panic-safe terminal cleanup** (`src/tui.rs`): `TerminalGuard` implements `Drop` to unconditionally call `disable_raw_mode()` and leave the alt screen, even on panic. Prevents the terminal from being stuck in a broken state after a crash.
 - **Non-interactive modes** (`src/main.rs`): `--summary` prints format + step counts + token/cost totals + first 20 step labels. `--export md|html|json` writes a transcript to stdout. `--diff <other>` prints a cross-format tool-usage comparison. `--debug-unknowns` reports drift to stderr alongside whichever mode is active. All are mutually compatible with `--no-cost` to suppress cost lines.
 - **Multi-session browser** (`src/browser.rs`): when agx is launched with no path argument, `discover_all()` scans `~/.claude/projects/*/*.jsonl`, `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`, and `~/.gemini/tmp/*/chats/session-*.json`, and prompts the user to pick one. Results sorted by mtime.
+- **Corpus mode** (`src/corpus.rs`): `agx corpus <dir>` subcommand walks a directory tree, loads every file in parallel via `rayon`, silently skips non-sessions, and aggregates cross-session stats. Filters via `--filter model=X` / `--filter tool=Y` / `--filter errored` are AND-combined. Output is a text summary by default (totals + per-format + per-model + per-tool breakdowns + first 5 parse errors) or `--json` for pretty-printed stats. The parallel walk uses `rayon::par_iter` and can be forced serial via `AGX_CORPUS_SERIAL=1` for debugging.
 - **Single-pass truncate** (`src/timeline.rs`): custom `truncate()` helper replaces newlines with spaces and caps char count in one pass. Unicode-safe.
 
 ## Code Conventions

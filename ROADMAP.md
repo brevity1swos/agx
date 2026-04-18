@@ -423,7 +423,7 @@ it up front-loads the biggest audience expansion of the roadmap.
 
 ---
 
-## Phase 3 — v0.4: Corpus Analysis & Performance
+## Phase 3 — v0.4: Corpus Analysis & Performance (in progress)
 
 **Goal:** Let a researcher or eval engineer point agx at 10,000 trajectories
 and get answers in seconds. Two intertwined concerns — cross-session
@@ -436,17 +436,45 @@ build around agx instead of with it.
 
 ### Subplans
 
-**3.1 — `agx corpus` command**
-- [ ] `agx corpus <dir>` subcommand: loads every session in a directory
-      tree, format-auto-detected per file
-- [ ] Parallel load via `rayon` (new feature-flagged dep; defaults on
-      because corpus is the flagship use case)
-- [ ] Cross-session aggregates: total cost, total tokens, per-tool error
-      rate, per-tool latency p50/p95, per-model usage, sessions/day histogram
-- [ ] Output modes: `--summary` (text), `--export json`, `--export csv`
-      (new), dedicated corpus TUI (3.3)
-- [ ] `--filter model=gpt-5` / `--filter tool=Bash` / `--filter errored`
-      post-filter predicates
+**3.1 — `agx corpus` command** ✅
+- [x] `agx corpus <dir>` subcommand (clap `Subcommand` derive) loads
+      every session in a directory tree, format-auto-detected per file.
+      Existing `agx <file>` flow untouched.
+- [x] Parallel load via `rayon` (new dep, always-on — corpus is the
+      flagship use case and the dep is small: `rayon-core` + two tiny
+      `crossbeam-*` helpers, all pure-Rust). `AGX_CORPUS_SERIAL=1` env
+      var forces serial loading for debugging.
+- [x] Recursive directory walk is stdlib-only (`std::fs::read_dir` +
+      depth limit); no `walkdir` dep. `--max-depth` defaults to 8 so
+      Claude Code / Codex / Gemini canonical layouts are all reachable.
+- [x] Silent skip on non-session files. `format::detect` failures are
+      dropped without noise; detection-succeeds-but-load-fails surfaces
+      as a real parse error. Binary files routed to OtelProto when the
+      feature is off are treated as non-sessions (skipping avoids
+      spamming "rebuild with --features" across every unrelated image).
+- [x] Cross-session aggregates: file count, parse success / error /
+      filtered-out counts; total steps; total tokens (in/out/cache_read/
+      cache_create); total cost; per-model breakdown (session count,
+      tokens, cost — sorted by session count); per-tool breakdown
+      (use count, error count — sorted by use count); per-format
+      breakdown (session count — sorted descending). All stable
+      orderings with alphabetic tie-breaks for reproducibility.
+- [x] `--filter model=<name>` / `--filter tool=<name>` / `--filter
+      errored` post-filter predicates. Multiple `--filter`s AND-combined.
+- [x] Output modes: text summary (default) and `--json` (full stats as
+      pretty-printed JSON). Text output surfaces the first 5 parse
+      errors with file paths so drift is visible at a glance.
+- [x] 11 new unit tests cover Filter::parse for all three forms,
+      Filter::matches on priced / tooled / errored sessions,
+      `aggregate` sum/sort/empty behavior, per-model and per-tool
+      ordering, filtered/errored counters, and tie-break stability.
+- [x] End-to-end verified on `assets/`: 9 files scanned, 7 parsed
+      (every shipped fixture), 0 errored, $0.0911 aggregate cost
+      across the 3 priced-model sessions.
+- [ ] Deferred to Phase 3.4: `--export csv`, `--json-lines` streaming,
+      per-tool p50/p95 latency (requires per-tool duration tracking
+      that agx's current `Step.duration_ms` doesn't provide), and
+      sessions/day histogram (needs timestamp-binning infrastructure).
 
 **3.2 — Performance pass**
 - [ ] Benchmark baseline on a large real session (~50MB JSONL, ~2000

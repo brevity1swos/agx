@@ -1,11 +1,13 @@
 mod browser;
 mod codex;
+mod corpus;
 mod debug_unknowns;
 mod export;
 mod format;
 mod gemini;
 mod generic;
 mod langchain;
+mod loader;
 mod otel_json;
 mod otel_proto;
 mod pricing;
@@ -15,9 +17,9 @@ mod tui;
 mod vercel_ai;
 
 use anyhow::Result;
-use clap::{CommandFactory, Parser, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::{Shell, generate};
-use format::Format;
+use loader::load_session;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use timeline::{Step, compute_session_totals, compute_tool_stats, count_from_steps};
@@ -67,25 +69,51 @@ struct Cli {
     /// launching the TUI. Mutually exclusive with --summary.
     #[arg(long, value_enum, value_name = "FORMAT")]
     export: Option<ExportFormat>,
+
+    /// Optional subcommand. When present, overrides the single-session
+    /// flow. Today only `corpus` exists — it aggregates stats across
+    /// every session file in a directory tree.
+    #[command(subcommand)]
+    command: Option<Commands>,
 }
 
-fn load_session(path: &Path) -> Result<Vec<Step>> {
-    let fmt = format::detect(path)?;
-    let steps = match fmt {
-        Format::ClaudeCode => {
-            let entries = session::load(path)?;
-            timeline::build(&entries)
-        }
-        Format::Codex => codex::load(path)?,
-        Format::Gemini => gemini::load(path)?,
-        Format::Generic => generic::load(path)?,
-        Format::Langchain => langchain::load(path)?,
-        Format::OtelJson => otel_json::load(path)?,
-        Format::OtelProto => otel_proto::load(path)?,
-        Format::VercelAi => vercel_ai::load(path)?,
-    };
-    Ok(steps)
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Scan a directory tree, load every session in parallel, and print
+    /// aggregate stats (per-model / per-tool / per-format breakdowns,
+    /// totals, and cost). Unrecognized files are silently skipped.
+    Corpus(CorpusArgs),
 }
+
+#[derive(clap::Args, Debug)]
+struct CorpusArgs {
+    /// Directory to scan. Walks recursively up to `--max-depth`.
+    dir: PathBuf,
+
+    /// Keep only sessions matching ALL of the given filters. Value shapes:
+    /// `model=<name>`, `tool=<name>`, or the bare keyword `errored`.
+    /// Can be repeated.
+    #[arg(long, value_name = "FILTER")]
+    filter: Vec<String>,
+
+    /// Emit the aggregate stats as JSON instead of a human-readable summary.
+    #[arg(long)]
+    json: bool,
+
+    /// Suppress cost estimates (mirror of the top-level --no-cost flag).
+    #[arg(long)]
+    no_cost: bool,
+
+    /// Maximum directory-tree depth to walk. Default is 8, enough for
+    /// every format's canonical storage layout (Claude Code's
+    /// `~/.claude/projects/<encoded>/<uuid>.jsonl` sits at depth 4 from
+    /// `~/.claude`, Codex at depth 5 from `~/.codex`, etc.).
+    #[arg(long, default_value_t = 8)]
+    max_depth: usize,
+}
+
+// `load_session` itself lives in src/loader.rs so both the single-session
+// flow below and the corpus subcommand dispatch through the same entry.
 
 fn print_diff(path_a: &Path, steps_a: &[Step], path_b: &Path, steps_b: &[Step]) {
     let fmt_a = format::detect(path_a).map_or_else(|_| "?".into(), |f| f.to_string());
@@ -164,6 +192,24 @@ fn main() -> Result<()> {
         let mut cmd = Cli::command();
         generate(shell, &mut cmd, "agx", &mut std::io::stdout());
         return Ok(());
+    }
+
+    // `agx corpus <dir>` subcommand takes over before the single-session
+    // flow when the user asks for corpus-level analytics.
+    if let Some(Commands::Corpus(args)) = cli.command {
+        let filters = args
+            .filter
+            .iter()
+            .map(|s| corpus::Filter::parse(s))
+            .collect::<Result<Vec<_>>>()?;
+        let corpus_args = corpus::CorpusArgs {
+            dir: args.dir,
+            filters,
+            json: args.json,
+            no_cost: args.no_cost,
+            max_depth: args.max_depth,
+        };
+        return corpus::run(&corpus_args);
     }
 
     let session_path = if let Some(p) = cli.session {

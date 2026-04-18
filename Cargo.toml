@@ -25,6 +25,11 @@ clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 arboard = "3"
 prost = { version = "0.13", optional = true }
+# Parallel parsing in `agx corpus <dir>`. Pulls in `rayon-core` + `crossbeam`
+# helpers (both pure-Rust, no OS-specific transitive deps). Small enough
+# to earn its place given the target use case of scanning thousands of
+# session files at once.
+rayon = "1"
 
 [dev-dependencies]
 tempfile = "3"

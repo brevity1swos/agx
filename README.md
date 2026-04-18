@@ -101,6 +101,12 @@ agx --export json <session> > session.json
 # Diagnose format drift — prints every entry type or field the parser
 # didn't recognize, to stderr. Useful when a new CLI version lands.
 agx --debug-unknowns <session>
+
+# Aggregate stats across a directory of sessions (recursive walk,
+# parallel parse). Filters AND-combine.
+agx corpus <dir>
+agx corpus <dir> --filter model=claude-opus-4-6 --filter tool=Bash
+agx corpus <dir> --filter errored --json       # pretty-printed stats JSON
 ```
 
 ## Use on your own sessions
