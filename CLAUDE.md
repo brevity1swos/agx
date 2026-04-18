@@ -42,6 +42,7 @@ src/
 ├── vercel_ai.rs        # Vercel AI SDK `generateText` / `streamText` result parser (camelCase tool fields, steps[])
 ├── loader.rs           # `load_session(path)` — format dispatch front door shared by single-session and corpus flows
 ├── corpus.rs           # `agx corpus <dir>` subcommand: parallel rayon parse, aggregate, filter, text/json output
+├── corpus_tui.rs       # `agx corpus --tui <dir>` interactive two-pane TUI (list + detail, drills into per-session tui.rs)
 ├── timeline.rs         # Shared Step / StepKind / Usage / SessionTotals + step helpers + compute_* functions
 ├── pricing.rs          # Per-model USD rate table + Step::cost_usd delegation target
 ├── export.rs           # Markdown / HTML / JSON transcript writers (String-returning, no I/O)

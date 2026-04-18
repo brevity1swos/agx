@@ -107,6 +107,7 @@ agx --debug-unknowns <session>
 agx corpus <dir>
 agx corpus <dir> --filter model=claude-opus-4-6 --filter tool=Bash
 agx corpus <dir> --filter errored --json       # pretty-printed stats JSON
+agx corpus <dir> --tui                         # interactive browser: list + detail, Enter drills in
 ```
 
 ## Use on your own sessions

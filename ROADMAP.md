@@ -510,13 +510,37 @@ build around agx instead of with it.
       `criterion` + a large synthetic fixture — tracked alongside
       the benchmark commit.
 
-**3.3 — Corpus TUI view**
-- [ ] `agx corpus --tui <dir>` launches an overview TUI: session list
-      (left) sorted by mtime or cost or error count; selected-session
-      summary (right); Enter to drill into the normal per-session TUI,
-      Esc returns to the corpus view
-- [ ] Per-tool heatmap across sessions (reuse Phase 0 heatmap machinery)
-- [ ] Keybindings consistent with the session TUI (j/k, /, f, :N)
+**3.3 — Corpus TUI view** ✅
+- [x] `agx corpus --tui <dir>` launches a two-pane TUI: session list on
+      the left, selected-session summary on the right, corpus totals
+      in a cyan header bar, keybinding hints in a gray footer.
+- [x] `src/corpus_tui.rs` owns its raw-mode lifecycle via a
+      `TerminalGuard`. Drill-in (Enter) tears down the corpus TUI, runs
+      the existing per-session `tui::run`, then re-enters the corpus
+      view when that exits. Clean because raw mode is process-global,
+      not stackable.
+- [x] Sort cycle via `s`: mtime ↓ → cost ↓ → errors ↓ → tokens ↓ →
+      format/name → (wrap). Current mode shown in the header. Selected
+      session's identity survives re-sorts — list cursor follows the
+      session, not the row index.
+- [x] Keybindings mirror the per-session TUI verbatim (j/k/g/G/
+      Home/End/PgUp/PgDn navigation, ?/F1 help overlay, q/Esc quit)
+      plus two corpus-specific additions (Enter drill-in, s sort).
+- [x] `--tui` is `conflicts_with = "json"` at the clap level — the TUI
+      owns the terminal, JSON needs stdout clean.
+- [x] `mtime_secs` plumbed into `ParsedSession` so the default
+      mtime-desc sort is meaningful; populated from `fs::metadata`
+      during parallel load.
+- [x] 9 new unit tests cover sort cycle ordering, mtime-desc with
+      None at bottom, cost/errors/tokens-desc ordering, alphabetic
+      tie-break, selection-survives-sort-cycle, and format-tag
+      short-label trimming.
+- [ ] **Deferred**: per-tool heatmap across sessions — this deserves a
+      dedicated design pass (heatmap color palette in the corpus
+      context isn't quite the same signal as the per-session one).
+      Tracked as a Phase 3.3 extension.
+- [ ] **Deferred**: in-TUI filter/search. The CLI `--filter` already
+      covers the main use case; live filtering could come later.
 
 **3.4 — Eval-loop integration**
 - [ ] `agx corpus <dir> --json-lines` streams one JSON per session as they

@@ -25,7 +25,7 @@ pub fn discover_all() -> Vec<SessionFile> {
 
     // Sort by modified time descending (newest first). Files without mtime
     // end up at the bottom.
-    files.sort_by(|a, b| b.modified_secs.cmp(&a.modified_secs));
+    files.sort_by_key(|f| std::cmp::Reverse(f.modified_secs));
     files
 }
 

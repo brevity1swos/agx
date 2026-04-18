@@ -1,6 +1,7 @@
 mod browser;
 mod codex;
 mod corpus;
+mod corpus_tui;
 mod debug_unknowns;
 mod export;
 mod format;
@@ -119,6 +120,12 @@ struct CorpusArgs {
     /// Print walk / load / aggregate timing breakdown to stderr.
     #[arg(long, hide = true)]
     bench: bool,
+
+    /// Launch the interactive corpus TUI — session list + selected-session
+    /// summary + drill-in to per-session step-through. Mutually exclusive
+    /// with `--json` (TUI owns the terminal; JSON needs stdout clean).
+    #[arg(long, conflicts_with = "json")]
+    tui: bool,
 }
 
 // `load_session` itself lives in src/loader.rs so both the single-session
@@ -218,6 +225,7 @@ fn main() -> Result<()> {
             no_cost: args.no_cost,
             max_depth: args.max_depth,
             bench: args.bench,
+            tui: args.tui,
         };
         return corpus::run(&corpus_args);
     }

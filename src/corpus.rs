@@ -82,14 +82,16 @@ impl Filter {
 /// with its derived aggregates, or a format-drift error we want to
 /// surface in the corpus summary.
 #[derive(Debug)]
-#[allow(dead_code)] // `path` is reserved for future per-session drill-down
-// output; keeping it so the JSON shape stays stable.
 pub struct ParsedSession {
     pub path: PathBuf,
     pub format: Format,
     pub totals: SessionTotals,
     pub tool_stats: Vec<crate::timeline::ToolStats>,
     pub step_count: usize,
+    /// Unix timestamp in seconds of the session file's mtime, used by the
+    /// corpus TUI to sort by recency. `None` when we couldn't stat the
+    /// file (permission error, file replaced mid-walk, etc).
+    pub mtime_secs: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -149,12 +151,18 @@ pub fn load_parallel(paths: &[PathBuf]) -> (Vec<ParsedSession>, Vec<ParseError>)
             Ok((fmt, steps)) => {
                 let totals = compute_session_totals(&steps);
                 let tool_stats = compute_tool_stats(&steps);
+                let mtime_secs = std::fs::metadata(&path)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs());
                 parsed.push(ParsedSession {
                     path,
                     format: fmt,
                     totals,
                     tool_stats,
                     step_count: steps.len(),
+                    mtime_secs,
                 });
             }
             // Silent drop: file wasn't a recognized session at all. We
@@ -347,6 +355,11 @@ pub struct CorpusArgs {
     /// When true, emit walk / load / aggregate timings to stderr after
     /// the main output. Wired from the hidden `--bench` CLI flag.
     pub bench: bool,
+    /// When true, launch the interactive corpus TUI (session list +
+    /// selected-session summary, Enter drills into the per-session TUI).
+    /// Mutually exclusive with `--json` (the TUI owns the terminal; JSON
+    /// needs stdout clean).
+    pub tui: bool,
 }
 
 /// Entry point called from `main.rs::main`. Walks the directory, loads
@@ -371,7 +384,12 @@ pub fn run(args: &CorpusArgs) -> Result<()> {
     let stats = aggregate(&parsed, &errors, file_count, filtered_out);
     let agg_ms = t_agg.elapsed().as_secs_f64() * 1000.0;
 
-    if args.json {
+    if args.tui {
+        // Drop into the interactive corpus TUI. When the user selects a
+        // session and hits Enter, the outer loop re-runs the TUI after
+        // the drill-in per-session TUI exits.
+        crate::corpus_tui::run(parsed, &stats, args.no_cost)?;
+    } else if args.json {
         println!("{}", serde_json::to_string_pretty(&stats)?);
     } else {
         print_text_summary(&stats, &args.dir, args.no_cost, &errors);
@@ -488,6 +506,7 @@ mod tests {
             step_count: steps.len(),
             totals,
             tool_stats,
+            mtime_secs: None,
         }
     }
 
