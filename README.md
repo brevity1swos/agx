@@ -86,8 +86,10 @@ agx
 # Watch a live session as it's being written
 agx --live ~/.claude/projects/<project>/<session>.jsonl
 
-# Compare two sessions
+# Compare two sessions — text summary
 agx session_a.jsonl --diff session_b.jsonl
+# …or the interactive two-pane TUI (synchronized scrolling, color-coded alignment)
+agx session_a.jsonl --diff session_b.jsonl --diff-tui
 
 # Non-interactive summary for scripts — includes token / cost totals when usage is present
 agx --summary <session>

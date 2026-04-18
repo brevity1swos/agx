@@ -3,11 +3,8 @@ mod codex;
 mod corpus;
 mod corpus_tui;
 mod debug_unknowns;
-// `diff_align` is Phase 4.1 part 1 — the pure-algorithm alignment module.
-// The TUI that consumes it (`diff_tui.rs`) lands in a follow-up commit
-// and will remove the need for this allow.
-#[allow(dead_code)]
 mod diff_align;
+mod diff_tui;
 mod export;
 mod format;
 mod gemini;
@@ -51,6 +48,12 @@ struct Cli {
     /// Compare two sessions side-by-side (text summary)
     #[arg(long)]
     diff: Option<PathBuf>,
+
+    /// Launch the interactive side-by-side diff TUI instead of the
+    /// text summary. Requires `--diff <path>`. Mutually exclusive
+    /// with `--summary` / `--export` since those own stdout.
+    #[arg(long, requires = "diff", conflicts_with_all = ["summary", "export"])]
+    diff_tui: bool,
 
     /// Live mode: watch for file changes and auto-refresh
     #[arg(long)]
@@ -284,7 +287,24 @@ fn main() -> Result<()> {
 
     if let Some(diff_path) = &cli.diff {
         let steps_b = load_session(diff_path)?;
-        print_diff(&session_path, &steps, diff_path, &steps_b);
+        if cli.diff_tui {
+            // Interactive two-pane diff — requires both session formats
+            // for the header labels.
+            let fmt_a =
+                format::detect(&session_path).map_or_else(|_| "?".into(), |f| f.to_string());
+            let fmt_b = format::detect(diff_path).map_or_else(|_| "?".into(), |f| f.to_string());
+            diff_tui::run(
+                &steps,
+                &steps_b,
+                &session_path,
+                diff_path,
+                &fmt_a,
+                &fmt_b,
+                cli.no_cost,
+            )?;
+        } else {
+            print_diff(&session_path, &steps, diff_path, &steps_b);
+        }
         return Ok(());
     }
 

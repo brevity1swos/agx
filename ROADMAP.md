@@ -588,31 +588,40 @@ diff, deeper search, and notes that survive session edits.
 
 ### Subplans
 
-**4.1 — Interactive side-by-side diff** (part 1 of 2 shipped)
+**4.1 — Interactive side-by-side diff** ✅
 - [x] Pure-algorithm alignment module (`src/diff_align.rs`) —
       longest-common-subsequence over a structural `Sig` (step kind +
-      tool name), no TUI deps. O(N·M) DP with backtrack; fine for
-      typical session sizes (<2k steps). Hunt-Szymanski / Myers are
-      left for later if per-session step counts start hitting 10k+.
-- [x] `AlignRow { left: Option<usize>, right: Option<usize>, kind }`
-      with `AlignKind::{Match, Differ, LeftOnly, RightOnly}`. Match =
-      same kind + tool + detail text; Differ = same kind + tool but
-      content drifted; LeftOnly / RightOnly = unpaired gaps.
-- [x] 10 unit tests cover: identical sequences all-Match, empty
-      inputs, one-sided emptiness, extra-tool-call on one side
-      becomes RightOnly rows, same-structure / different-text produces
-      Differ, different tool names at same position split into
-      one-sided gaps, same-tool-different-input becomes Differ,
-      reordered tool calls produce 1 pair + 2 gaps, LCS-picks-longer
-      behavior over equivalent-signature ties.
-- [ ] **Part 2 (next commit)**: `src/diff_tui.rs` — two-pane ratatui
-      rendering of the alignment, `--diff-tui` CLI flag on the
-      top-level (requires `--diff <path>`), synchronized scrolling,
-      j/k/g/G/Home/End/PgUp/PgDn navigation, ?/F1 help, q/Esc quit.
-      Color-code rows by AlignKind.
-- [ ] **Later extensions**: `Tab` jumps to next unaligned-only row,
-      `d` toggles inline diff of the selected row's detail, drill-in
-      from a diff row into the single-session TUI on either side.
+      tool name), no TUI deps. O(N·M) DP with backtrack. 10 unit
+      tests.
+- [x] `AlignRow { left, right, kind }` with
+      `AlignKind::{Match, Differ, LeftOnly, RightOnly}`.
+- [x] Two-pane TUI (`src/diff_tui.rs`) renders the alignment with
+      synchronized scrolling. The two ratatui `List`s share one
+      `ListState` across both `render_stateful_widget` calls — panes
+      are the same height (horizontal split), so ratatui's
+      "keep-selected-visible" offset math produces identical offsets
+      on both sides, scrolling the panes in lockstep for free.
+- [x] Color coding per row: Match green (`=`), Differ yellow (`~`),
+      LeftOnly red (`-`) on left + gray "(absent)" right, RightOnly
+      green (`+`) on right + gray "(absent)" left. ASCII prefixes only.
+- [x] Header shows both file labels with format + tokens + cost plus
+      the alignment counts (N match · N differ · N only-A · N only-B).
+      Footer shows key hints.
+- [x] Navigation: j/k/g/G/Home/End/PgUp/PgDn mirrors per-session and
+      corpus TUIs exactly. ?/F1 help overlay with color legend, q/Esc
+      quit. Raw-mode owned via `TerminalGuard` (same pattern as the
+      other TUIs).
+- [x] `--diff-tui` CLI flag on top-level Cli. `requires = "diff"`
+      enforces that `--diff <path>` must also be set; conflicts_with
+      `--summary` / `--export` since those own stdout.
+- [x] 6 unit tests on the TUI side cover align-kind counting,
+      App::new selection state, navigation clamping, row_style
+      LeftOnly/RightOnly asymmetry, and build_items gap-side
+      "(absent)" sentinel.
+- [ ] **Later extensions** (tracked as 4.1 follow-ups): `Tab` jumps
+      to next unaligned-only row, `d` toggles inline diff of the
+      selected row's detail, drill-in from a diff row into the
+      single-session TUI on either side.
 
 **4.2 — Jump-to-time + trim**
 - [ ] `:@HH:MM:SS` / `:@12:34` jumps to first step at-or-after that time
