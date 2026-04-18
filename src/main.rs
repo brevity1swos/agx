@@ -15,6 +15,7 @@ mod otel_json;
 mod otel_proto;
 mod pricing;
 mod session;
+mod slice;
 mod timeline;
 mod tui;
 mod vercel_ai;
@@ -83,6 +84,32 @@ struct Cli {
     /// diagnostic flag for performance-regression reports.
     #[arg(long, hide = true)]
     bench: bool,
+
+    /// Only include steps at or after this offset from the session's
+    /// first step. Duration grammar: `30s` / `5m` / `2h` / `1d`, or
+    /// compounds like `1h30m`, or a bare integer (seconds). Applied
+    /// after load, before rendering.
+    #[arg(long, value_name = "DURATION")]
+    after: Option<String>,
+
+    /// Only include steps strictly before this offset from the
+    /// session's first step. Same duration grammar as `--after`.
+    #[arg(long, value_name = "DURATION")]
+    before: Option<String>,
+
+    /// Only include steps at or after this 0-based index.
+    #[arg(long, value_name = "N", conflicts_with = "range")]
+    after_step: Option<usize>,
+
+    /// Only include steps strictly before this 0-based index.
+    #[arg(long, value_name = "N", conflicts_with = "range")]
+    before_step: Option<usize>,
+
+    /// Shorthand for combining --after-step and --before-step.
+    /// Syntax: `start..end` (exclusive end), or open-ended `..500`,
+    /// `100..`, or just `..` for a no-op.
+    #[arg(long, value_name = "RANGE")]
+    range: Option<String>,
 
     /// Optional subcommand. When present, overrides the single-session
     /// flow. Today only `corpus` exists — it aggregates stats across
@@ -284,6 +311,39 @@ fn main() -> Result<()> {
             steps.len()
         );
     }
+
+    // Resolve and apply slicing (--range / --after-step / --before-step /
+    // --after / --before). The range string takes precedence over the
+    // scalar step bounds (clap-level `conflicts_with = "range"` on the
+    // scalars means we won't see both from the same invocation, but
+    // checking here keeps the precedence obvious).
+    let range = if let Some(r) = cli.range.as_deref() {
+        slice::parse_step_range(r)?
+    } else {
+        slice::step_range_from_bounds(cli.after_step, cli.before_step)
+    };
+    let after_ms = cli
+        .after
+        .as_deref()
+        .map(slice::parse_duration_ms)
+        .transpose()?;
+    let before_ms = cli
+        .before
+        .as_deref()
+        .map(slice::parse_duration_ms)
+        .transpose()?;
+    slice::warn_if_time_filter_ignored(&steps, after_ms, before_ms);
+    let sliced_any = !range.is_identity() || after_ms.is_some() || before_ms.is_some();
+    let steps = if sliced_any {
+        let before_count = steps.len();
+        let sliced = slice::slice_steps(steps, &range, after_ms, before_ms);
+        if cli.bench {
+            eprintln!("[bench] slice: {} → {} steps", before_count, sliced.len());
+        }
+        sliced
+    } else {
+        steps
+    };
 
     if let Some(diff_path) = &cli.diff {
         let steps_b = load_session(diff_path)?;

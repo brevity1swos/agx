@@ -45,6 +45,7 @@ src/
 ├── corpus_tui.rs       # `agx corpus --tui <dir>` interactive two-pane TUI (list + detail, drills into per-session tui.rs)
 ├── diff_align.rs       # Phase 4.1 pure alignment: LCS over (kind, tool_name) → Vec<AlignRow> for session-to-session diff
 ├── diff_tui.rs         # `agx foo --diff bar --diff-tui` two-pane ratatui rendering of the alignment
+├── slice.rs            # Phase 4.2 pure slicing: duration / range parsers + slice_steps applied in main before dispatch
 ├── timeline.rs         # Shared Step / StepKind / Usage / SessionTotals + step helpers + compute_* functions
 ├── pricing.rs          # Per-model USD rate table + Step::cost_usd delegation target
 ├── export.rs           # Markdown / HTML / JSON transcript writers (String-returning, no I/O)

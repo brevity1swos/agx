@@ -351,10 +351,59 @@ impl App {
         if trimmed.is_empty() {
             return;
         }
+        // `:@<duration>` — jump to first step at-or-after that offset
+        // from the session's first-step timestamp. Uses the shared
+        // slice duration parser so the grammar matches `--after` /
+        // `--before` exactly.
+        if let Some(offset_str) = trimmed.strip_prefix('@') {
+            match crate::slice::parse_duration_ms(offset_str) {
+                Ok(offset_ms) => self.goto_time_offset(offset_ms),
+                Err(e) => {
+                    self.status_msg = Some(format!("bad time offset `@{offset_str}`: {e}"));
+                }
+            }
+            return;
+        }
         match trimmed.parse::<usize>() {
             Ok(n) => self.goto_step(n),
             Err(_) => {
                 self.status_msg = Some(format!("unknown command: :{trimmed}"));
+            }
+        }
+    }
+
+    /// Jump the cursor to the first step whose timestamp is at least
+    /// `offset_ms` past the session's first-step timestamp. Used by
+    /// the `:@<duration>` command. No-op (with a status message) when
+    /// the session has no step timestamps.
+    fn goto_time_offset(&mut self, offset_ms: u64) {
+        let Some(session_start_ms) = self.steps.iter().find_map(|s| s.timestamp_ms) else {
+            self.status_msg = Some("session has no step timestamps; `:@` jump unavailable".into());
+            return;
+        };
+        let target = session_start_ms.saturating_add(offset_ms);
+        let Some(target_idx) = self
+            .steps
+            .iter()
+            .position(|s| s.timestamp_ms.is_some_and(|ts| ts >= target))
+        else {
+            self.status_msg = Some(format!(
+                "no step at-or-after +{}ms from session start",
+                offset_ms
+            ));
+            return;
+        };
+        // Translate original-step index into the current filtered view.
+        // If the target is hidden by a filter, report it explicitly
+        // rather than silently jumping somewhere unexpected.
+        match self.filtered_view.iter().position(|&i| i == target_idx) {
+            Some(view_idx) => self.list_state.select(Some(view_idx)),
+            None => {
+                self.status_msg = Some(format!(
+                    "step {} at +{}ms is hidden by the active filter",
+                    target_idx + 1,
+                    offset_ms
+                ));
             }
         }
     }
@@ -960,6 +1009,7 @@ fn run_loop(
                     Line::from("  Home / g        first step"),
                     Line::from("  End  / G        last step"),
                     Line::from("  :N              jump to visible row N"),
+                    Line::from("  :@<duration>    jump to first step ≥ offset from session start (1h30m, 5m, 90s)"),
                     Line::from("  <N><motion>     vim count prefix (3j, 5k, 2d, 42G, ...)"),
                     Line::from(""),
                     Line::from(Span::styled(
@@ -1454,6 +1504,57 @@ mod tests {
         let mut app = App::new(sample_steps(), false);
         app.execute_command("nope");
         assert!(app.status_msg.as_ref().unwrap().contains("unknown"));
+    }
+
+    #[test]
+    fn execute_command_at_duration_jumps_by_time_offset() {
+        let mut steps = sample_steps();
+        // Give the first three steps real timestamps 0 / 5s / 10s
+        // relative to a synthetic session start.
+        let base = 1_000_000u64;
+        steps[0].timestamp_ms = Some(base);
+        steps[1].timestamp_ms = Some(base + 5_000);
+        steps[2].timestamp_ms = Some(base + 10_000);
+        let mut app = App::new(steps, false);
+        app.execute_command("@5s");
+        // Step 1 is at +5s → its 0-based index is 1.
+        assert_eq!(app.list_state.selected(), Some(1));
+        app.execute_command("@10s");
+        assert_eq!(app.list_state.selected(), Some(2));
+    }
+
+    #[test]
+    fn execute_command_at_duration_without_timestamps_is_informative() {
+        // sample_steps() has no timestamps by default — the jump
+        // should not silently succeed; it should surface a message.
+        let mut app = App::new(sample_steps(), false);
+        app.execute_command("@1h");
+        let msg = app.status_msg.as_ref().expect("expected a status message");
+        assert!(
+            msg.contains("no step timestamps") || msg.contains("unavailable"),
+            "unexpected status: {msg}"
+        );
+    }
+
+    #[test]
+    fn execute_command_at_duration_past_end_reports_no_match() {
+        let mut steps = sample_steps();
+        steps[0].timestamp_ms = Some(1_000_000);
+        let mut app = App::new(steps, false);
+        app.execute_command("@1h");
+        // No step has timestamp >= start + 1h → status message, no
+        // selection change.
+        let msg = app.status_msg.as_ref().expect("expected a status message");
+        assert!(msg.contains("no step at-or-after"), "unexpected: {msg}");
+    }
+
+    #[test]
+    fn execute_command_rejects_bad_duration_spelling() {
+        let mut steps = sample_steps();
+        steps[0].timestamp_ms = Some(1_000_000);
+        let mut app = App::new(steps, false);
+        app.execute_command("@5x");
+        assert!(app.status_msg.as_ref().unwrap().contains("bad time offset"));
     }
 
     #[test]

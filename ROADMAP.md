@@ -623,12 +623,39 @@ diff, deeper search, and notes that survive session edits.
       selected row's detail, drill-in from a diff row into the
       single-session TUI on either side.
 
-**4.2 — Jump-to-time + trim**
-- [ ] `:@HH:MM:SS` / `:@12:34` jumps to first step at-or-after that time
-- [ ] `--after <duration>` / `--before <duration>` CLI filters (e.g.
-      `--after 2h`)
-- [ ] `--after-step <N>` / `--before-step <N>` step-index slices
-- [ ] `--range <a..b>` as sugar (e.g. `--range 100..500`)
+**4.2 — Jump-to-time + trim** ✅
+- [x] `src/slice.rs` — pure parser + slicer module. Duration grammar
+      supports `30s` / `5m` / `2h` / `1d`, compounds like `1h30m`,
+      long-form units (`minutes`, `hours`, ...), case-insensitive,
+      and a bare-integer-as-seconds convenience. 7 unit tests.
+- [x] Range grammar: `start..end` (exclusive end, mirrors Rust's
+      `Range<usize>`) with open-ended forms (`..500`, `100..`, `..`).
+      Malformed / reversed ranges return `Result::Err` at parse time.
+      6 unit tests.
+- [x] `slice_steps` applies index + time filters in one pass.
+      `warn_if_time_filter_ignored` keeps the core pure while giving
+      users a stderr warning when they asked for `--after` / `--before`
+      on a session without timestamps.
+- [x] CLI flags: `--after <DURATION>`, `--before <DURATION>`,
+      `--after-step <N>`, `--before-step <N>`, `--range <a..b>`. Clap-
+      level `conflicts_with = "range"` prevents the step-scalars from
+      combining with the range shorthand.
+- [x] Time semantics: filters are relative to the *session's first
+      step*, not wall-clock now. Unambiguous for archived sessions.
+- [x] Bench-hint integration — when `--bench` is on, slicing prints
+      `[bench] slice: before → after steps`.
+- [x] TUI extension: `:@<duration>` command jumps to the first step
+      at-or-after that offset from the session's first-step timestamp.
+      Uses the same `slice::parse_duration_ms` parser so CLI and TUI
+      speak the same grammar. Reports "no step timestamps" / "no step
+      at-or-after +Xms" / "hidden by the active filter" cleanly.
+      Help overlay updated with the new command. 4 unit tests.
+- [x] End-to-end verified on the Claude Code fixture:
+      `--range 2..6` trims to 4 steps, `--after 3s` trims to 7 steps,
+      `--after 10h` trims to 0 steps.
+- [ ] **Deferred**: absolute-time `:@HH:MM:SS` jump (ambiguous across
+      days; would require a date prefix or day-of-session heuristic).
+      `..=` inclusive-end range syntax (trivial add when asked for).
 
 **4.3 — Annotations**
 - [ ] `a` in TUI opens annotation prompt for current step

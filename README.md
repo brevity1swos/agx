@@ -95,6 +95,12 @@ agx session_a.jsonl --diff session_b.jsonl --diff-tui
 agx --summary <session>
 agx --summary --no-cost <session>           # Suppress cost estimate; keep token counts
 
+# Slice by step index or by time offset from the session's first step
+agx --range 100..500 <session>              # Exclusive end; open-ended forms like `..500` / `100..` also work
+agx --after-step 100 --before-step 500 <session>
+agx --after 30m --before 1h <session>       # Duration grammar: 30s / 5m / 2h / 1d, or compounds like 1h30m
+# Inside the TUI: `:@1h30m` jumps to the first step ≥ that offset from session start
+
 # Export a transcript to stdout — formats: md | html | json
 agx --export md   <session> > session.md
 agx --export html <session> > session.html
