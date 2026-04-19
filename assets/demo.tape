@@ -1,5 +1,7 @@
 # agx demo — step-through debugger for AI agent traces
-# Run: vhs assets/demo.tape
+# Prerequisites (run from the repo root):
+#   cargo build --release
+#   vhs assets/demo.tape
 
 Output assets/demo.gif
 Set Shell "bash"
@@ -8,6 +10,16 @@ Set Width 1400
 Set Height 800
 Set Padding 10
 Set TypingSpeed 50ms
+
+# Put the local release binary at the front of PATH so the typed command
+# below reads as plain `agx …`. Hidden so the export line doesn't appear
+# in the GIF.
+Hide
+Type "export PATH=$PWD/target/release:$PATH"
+Enter
+Sleep 0.2s
+Ctrl+L
+Show
 
 # Launch agx on the Claude Code sample session
 Type "agx assets/sample_session.jsonl"
