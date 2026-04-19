@@ -1,34 +1,18 @@
-mod annotations;
-mod browser;
-mod codex;
-mod corpus;
-mod corpus_tui;
-mod debug_unknowns;
-mod diff_align;
-mod diff_tui;
-mod export;
-mod format;
-mod gemini;
-mod generic;
-mod langchain;
-mod loader;
-mod otel_json;
-mod otel_proto;
-mod pricing;
-mod semantic;
-mod session;
-mod slice;
-mod timeline;
-mod tui;
-mod vercel_ai;
-
+// Modules live in `src/lib.rs` (the agx library crate) so the bench
+// harness under `benches/` and future integration tests can reuse them
+// without duplicating code. This binary is a thin shell around the
+// library.
+use agx::{
+    annotations, browser, corpus, debug_unknowns, diff_tui, export, format, loader, slice,
+    timeline::{Step, compute_session_totals, compute_tool_stats, count_from_steps},
+    tui,
+};
 use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::{Shell, generate};
 use loader::load_session;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use timeline::{Step, compute_session_totals, compute_tool_stats, count_from_steps};
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
 enum ExportFormat {
@@ -218,9 +202,9 @@ fn print_diff(path_a: &Path, steps_a: &[Step], path_b: &Path, steps_b: &[Step]) 
 
     // Build lookup maps once so the pairing loop is O(both) instead of
     // O(both · |stats|) linear scans, and no longer needs `.unwrap()`.
-    let map_a: HashMap<&str, &crate::timeline::ToolStats> =
+    let map_a: HashMap<&str, &agx::timeline::ToolStats> =
         stats_a.iter().map(|s| (s.name.as_str(), s)).collect();
-    let map_b: HashMap<&str, &crate::timeline::ToolStats> =
+    let map_b: HashMap<&str, &agx::timeline::ToolStats> =
         stats_b.iter().map(|s| (s.name.as_str(), s)).collect();
 
     let both: Vec<&String> = names_a.intersection(&names_b).collect();

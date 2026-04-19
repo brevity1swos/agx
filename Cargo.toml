@@ -44,3 +44,8 @@ rayon = "1"
 
 [dev-dependencies]
 tempfile = "3"
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "agx_bench"
+harness = false

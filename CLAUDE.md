@@ -14,6 +14,9 @@ cargo test --features embedding-search               # Run all tests (feature-on
 cargo clippy --all-targets -- -D warnings            # Lint, default features
 cargo clippy --all-targets --features otel-proto -- -D warnings  # Lint with feature on
 cargo clippy --all-targets --features embedding-search -- -D warnings  # Lint with semantic feature on
+cargo bench --bench agx_bench                        # Run criterion bench suite (parsers + aggregate + corpus)
+cargo bench --bench agx_bench -- --save-baseline main  # Capture baseline before a perf-targeted refactor
+cargo bench --bench agx_bench -- --baseline main     # Compare after-change run against saved baseline
 cargo fmt --check                                    # Format check
 cargo fmt                                            # Format apply
 cargo audit                                          # Supply chain audit
@@ -32,6 +35,7 @@ cargo audit                                          # Supply chain audit
 
 ```
 src/
+├── lib.rs              # Library shim re-exporting every module as `pub mod`; consumed by main.rs and benches/
 ├── main.rs             # CLI entry point: clap + format dispatch + --summary / --export / --diff branches
 ├── format.rs           # Format detection — returns ClaudeCode | Codex | Gemini | Generic | OtelJson
 ├── browser.rs          # Multi-session discovery + picker (scans ~/.claude, ~/.codex, ~/.gemini)

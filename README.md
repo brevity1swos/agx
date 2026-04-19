@@ -256,6 +256,22 @@ Each parser produces `Vec<Step>` directly; `timeline::build()` is the Claude Cod
 
 8 direct dependencies: `ratatui`, `crossterm`, `serde`, `serde_json`, `anyhow`, `clap`, `clap_complete`, `arboard`.
 
+## Pairs well with
+
+- **[rgx](https://github.com/brevity1swos/rgx)** — terminal regex
+  debugger. When an agx timeline step shows a tool-call argument
+  that contains a regex (a `Bash` grep, a sed expression, a routing
+  pattern), `R` will open rgx for step-through inspection (proposed).
+- **[sift](https://github.com/brevity1swos/sift)** — AI write review
+  gate. Sift consumes agx's `--export json` output for format-aware
+  session parsing, and launches agx from its review TUI to give
+  timeline context to pending-write decisions.
+
+All three tools are independent. Combined, they form
+**[stepwise](https://github.com/brevity1swos/stepwise)**, the
+terminal-native step-through debugger stack for the AI-development
+workflow.
+
 ## Credits
 
 - [rgx](https://github.com/brevity1swos/rgx) — same-family terminal regex debugger; agx inherits its design philosophy of narrow scope + deep engineering + terminal-native quality

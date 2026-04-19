@@ -498,17 +498,27 @@ build around agx instead of with it.
 - [x] Memory-target note added to CLAUDE.md's "Key patterns" section
       so future contributors don't regress the streaming path back to
       `read_to_string`.
-- [ ] `criterion` benchmarks (needs a `src/lib.rs` shim so the
-      `benches/` crate can import parsers). Separate commit — touches
-      workspace shape, better kept isolated.
-- [ ] Tool-name interning in `App` + lazy detail expansion
-      (`Step.detail` held as offset + length into the file buffer
-      instead of an owned `String`). Separate commit — crosses the
-      TUI / parser boundary and is the biggest win for very large
-      sessions.
-- [ ] Regression test for the ~3× file-size memory ceiling. Needs
-      `criterion` + a large synthetic fixture — tracked alongside
-      the benchmark commit.
+- [x] `criterion` benchmarks — `src/lib.rs` shim added exposing
+      parsers / timeline / corpus for out-of-crate consumers. New
+      `benches/agx_bench.rs` covers (a) per-format load with bytes/s
+      throughput, (b) `compute_session_totals` / `compute_tool_stats`
+      at N=100/1k/10k steps, (c) end-to-end corpus parallel load on
+      the repo's own `assets/` tree. Measured 25-77 MiB/s parse
+      throughput on macOS-arm64 at ship time; use
+      `cargo bench --bench agx_bench -- --save-baseline main` +
+      `--baseline main` for regression tracking.
+- [ ] **Deferred**: tool-name interning in `App` + lazy detail
+      expansion (`Step.detail` held as offset + length into the file
+      buffer instead of an owned `String`). Separate commit —
+      crosses the TUI / parser boundary and is the biggest win for
+      very large sessions. Tracked as a Phase 3.2 follow-up; the
+      bench baseline now in place will quantify the gain when it
+      lands.
+- [ ] **Deferred**: explicit regression test for the ~3× file-size
+      memory ceiling. OS-specific RSS measurement is fragile across
+      macOS / Linux / Windows CI runners; revisit once the interning
+      + lazy-detail changes ship (at which point the numbers will
+      shift anyway).
 
 **3.3 — Corpus TUI view** ✅
 - [x] `agx corpus --tui <dir>` launches a two-pane TUI: session list on
