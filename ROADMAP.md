@@ -21,6 +21,38 @@ cross-team analytics. agx is what you reach for when you're already in the
 terminal and want to scrub through a session with vim bindings — the `gdb`
 of agent execution.
 
+**And agx is one of three.** agx is the read-only middle tool in a
+three-tool suite, **stepwise**, hosted under the `brevity1swos` GitHub
+org:
+
+- **rgx** — terminal regex debugger (stable, v0.11.x). Regex tokens, not
+  agent steps.
+- **agx** — this project. Agent trace timeline scrubber.
+- **sift** — AI write review gate (git-status-for-AI-writes). Reviews
+  the writes that agx's timeline captured.
+
+These roles compose via a one-liner that appears verbatim across the
+three READMEs: *agx : what the agent did (read-only timeline) :: sift :
+what you kept (writable review gate).* rgx is the shared regex debugger
+used by sift for policy-rule iteration. Each tool stands alone — agx
+must earn its keep against browser dashboards without depending on its
+siblings — but the suite-level compounding is a first-class design
+concern. Shared CLI grammar, TUI keybindings, color palette, and
+integration contracts live in
+[docs/suite-conventions.md](docs/suite-conventions.md); the copy in this
+repo is maintained verbatim against the rgx and sift copies, and
+divergence is a smell to fix forward.
+
+**Stepwise thesis.** The three tools run a single experiment: *can
+humans keep control over an automated agentic workflow without paying
+the efficiency of that workflow for it?* If review friction bleeds into
+the agent's end-to-end cycle, users skip the review and the hypothesis
+falsifies in real use. Every agx feature passes that test before it
+ships — terminal-native (no browser context switch), fast startup,
+read-only-by-default, feature-detected integrations that never block
+flow when siblings are missing. Oversight must make judgment *possible*,
+not impose it, and not automate it away.
+
 **Who it serves.** Every developer who builds agentic AI services — as broad
 as "developers who use regex." That is language-agnostic, framework-agnostic,
 vendor-agnostic: LangChain / Vercel AI SDK / LlamaIndex / Pydantic AI
@@ -56,7 +88,8 @@ relevant phase):
    metadata richens; not a separate phase but a subplan inside the format
    and replay phases.
 
-**Guiding principles** (kept in sync with CLAUDE.md "Not to Do"):
+**Guiding principles** (kept in sync with CLAUDE.md "Not to Do" and the
+stepwise suite's shared posture):
 
 1. Narrow scope, deep engineering, terminal-native. No hosted components,
    no telemetry, no team-sharing features.
@@ -68,6 +101,23 @@ relevant phase):
 5. Keep the dep baseline lean. Anything that pulls in heavy crates (SQLite,
    ONNX, protobuf, tokio-full) goes behind a feature flag.
 6. MSRV locked at Rust 1.85 (required by edition 2024) until a Phase bumps it with an explicit note.
+7. **Composition over feature bloat.** agx does one thing (session
+   timeline viewer); rgx does one thing (regex debugger); sift does one
+   thing (AI write review gate). The suite's power is their intersection,
+   not any one tool's feature list. If a proposed feature duplicates
+   sift's writable-review or rgx's regex-authoring surface, defer it to
+   the sibling tool.
+8. **Human judgment is the point; automation of recognition is a
+   regression.** agx exposes agent trajectories for a human to inspect
+   and reason about. It does not classify steps as "safe" or auto-
+   summarize away the diff. If a future feature would replace the
+   timeline with an AI-generated tl;dr of the timeline, it fails the
+   stepwise thesis even if it ships faster — cut it.
+9. **Public CLI surfaces are contracts.** `--export json`, `--summary`,
+   and any future `--jump-to` flag are consumed by sift (the stepwise
+   suite's downstream consumer) via subprocess. Changes to their shape
+   are versioned, land in CHANGELOG, and bump the cross-tool
+   compatibility table in README.
 
 ---
 
@@ -807,10 +857,33 @@ lean into MCP as the tool-call metadata layer matures.
 - [ ] Ships behind `agx --experimental-replay` for at least two releases
       before graduation
 
+**5.5 — `--jump-to <session>:<step>` for stepwise Timeline jump**
+- [ ] CLI flag that launches the TUI with the cursor pre-positioned at a
+      specific 0-indexed step of a given session. Session may be supplied
+      as a file path or as a short session ID resolved via the browser
+      scan paths (`~/.claude/projects`, `~/.codex/sessions`,
+      `~/.gemini/tmp`).
+- [ ] Missing step → clamp to last, emit a status-bar warning rather
+      than error-exiting. Missing session path → exit 2 with the usual
+      load error path.
+- [ ] Completions contract: `agx --jump-to <TAB>` completes session
+      identifiers from the browser scan for the user's shell.
+- [ ] This is the CLI surface sift uses for its `t`-keybind Timeline
+      jump (per [docs/suite-conventions.md](docs/suite-conventions.md)
+      §1 and §5). Lands alongside branch / replay because its natural
+      implementation overlaps with the in-TUI `:N` jump and benefits
+      from the same event-loop entry point.
+- [ ] Stability commitment: once shipped, the flag's semantics are a
+      public contract per guiding principle 9; breaking changes require
+      a minor-version bump and a note in the cross-tool compatibility
+      table.
+
 **Acceptance:** user can browse branches in a Claude Code session that has
-them, replay a single tool call via MCP in an isolated backend, and get a
-desktop notification when a long-running live session errors. Experimental
-flag gate is documented in README.
+them, replay a single tool call via MCP in an isolated backend, get a
+desktop notification when a long-running live session errors, and launch
+agx pre-positioned at a specific step via `agx --jump-to session.jsonl:42`
+(the entry point sift's review TUI uses). Experimental flag gate is
+documented in README.
 
 **Depends on:** Phase 0 (event loop), Phase 4 (annotations, since replay
 results attach to steps).
@@ -1003,6 +1076,26 @@ of format support that didn't fit earlier phases.
 - [ ] 300+ tests passing (ballpark; quality over quantity)
 - [ ] README + ROADMAP honest about what's in and what's out
 
+**8.5 — Stepwise suite retrofits**
+- [ ] `agx doctor` subcommand (mirroring sift's `sift doctor` from that
+      repo's Phase 1.6): probes rgx and sift on `PATH`, reports version
+      + whether each sibling's CLI surface matches the minimum-supported
+      contract from suite-conventions §5. Feature-detection, silent
+      degrade when a sibling is missing (status output, never exit 2).
+- [ ] Cross-tool compatibility table in README, per
+      suite-conventions §7. Columns: agx version ↔ minimum sift version
+      ↔ minimum rgx version. Updated on every minor release that
+      changes a public CLI surface.
+- [ ] "Pairs well with" section in README, linking rgx and sift with
+      one-line descriptions from *their* perspective (not agx's). Per
+      suite-conventions §9.
+- [ ] Optional `R` → rgx "Regex lens" keybind (proposed in
+      suite-conventions §1 cross-tool table, marked "planned, Phase 5+").
+      Dispatches `rgx --pattern <selection>` on whatever string is under
+      the cursor; useful for debugging regex-in-tool-calls. Only lands
+      if dogfood demand surfaces; otherwise drop the entry and update
+      suite-conventions.
+
 **Acceptance:** `agx` reads every major CLI and framework trace format,
 docs are complete, public APIs are SemVer-stable, and a new contributor
 can go from clone to merged PR from docs alone.
@@ -1046,6 +1139,29 @@ audience:
 - **Performance is a feature, not polish.** After Phase 3, never regress
   the <1s large-session load target without an explicit tradeoff in
   CHANGELOG.
+- **Stepwise kill criteria are active.** agx must stand on its own
+  against browser-based dashboards — suite compounding does not rescue
+  a tool nobody uses. Triggers that should cause a hard reassessment
+  (archive or deprecate, not just defer):
+  - Maintainer hasn't used agx in their own workflow in the preceding
+    three months.
+  - Another open-source terminal tool ships with substantively
+    overlapping scope AND better multi-format coverage.
+  - A major CLI (Claude Code / Codex / Gemini) ships in-tool
+    per-session replay and inspection that erases agx's reason to
+    exist.
+  - Issue response drops below "within a week" for two consecutive
+    minor versions — signals the tool is consuming more time than it
+    returns.
+  Each Phase transition re-checks these; the default is continue, but
+  the re-check is non-optional.
+- **Dogfood the suite.** Every agx minor release is tested alongside
+  the current sift and rgx minor releases. Divergence surfaced in
+  [docs/suite-conventions.md](docs/suite-conventions.md) §10 is closed
+  out opportunistically in the next release that touches affected code.
+  Shared conventions are enforced by maintainer discipline; CI does not
+  automate this because the three repos intentionally don't share a
+  build system.
 
 ---
 

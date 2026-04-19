@@ -261,16 +261,36 @@ Each parser produces `Vec<Step>` directly; `timeline::build()` is the Claude Cod
 - **[rgx](https://github.com/brevity1swos/rgx)** — terminal regex
   debugger. When an agx timeline step shows a tool-call argument
   that contains a regex (a `Bash` grep, a sed expression, a routing
-  pattern), `R` will open rgx for step-through inspection (proposed).
+  pattern), `R` will open rgx for step-through inspection (proposed —
+  see ROADMAP §8.5).
 - **[sift](https://github.com/brevity1swos/sift)** — AI write review
   gate. Sift consumes agx's `--export json` output for format-aware
   session parsing, and launches agx from its review TUI to give
-  timeline context to pending-write decisions.
+  timeline context to pending-write decisions. The Timeline-jump CLI
+  (`agx --jump-to <session>:<step>`) is scheduled for Phase 5.5.
 
-All three tools are independent. Combined, they form
-**[stepwise](https://github.com/brevity1swos/stepwise)**, the
+All three tools are independent — each earns its keep alone. Combined,
+they form **[stepwise](https://github.com/brevity1swos/stepwise)**, the
 terminal-native step-through debugger stack for the AI-development
-workflow.
+workflow. Shared UX and integration contracts (keybindings, CLI
+grammar, color palette, cross-tool file / subprocess contracts) live
+in [docs/suite-conventions.md](docs/suite-conventions.md), maintained
+verbatim across the three repos.
+
+### Compatibility
+
+Suite-level cross-tool compatibility, updated on each minor release
+that changes a public CLI surface (per suite-conventions §7).
+
+| agx   | works with sift | works with rgx |
+|-------|-----------------|----------------|
+| 0.1.x | —               | any            |
+| 0.2.x | planned ≥ 0.3   | 0.11.x+        |
+
+agx talks to its siblings at the subprocess boundary (`agx --export
+json`, `agx --summary`, future `agx --jump-to`) — no shared Rust
+library, no coordinated release train. Missing siblings never block
+agx's own flow.
 
 ## Credits
 

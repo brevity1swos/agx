@@ -91,6 +91,44 @@ src/
 - **Line-streaming for JSONL parsers** (`src/session.rs`, `src/codex.rs`): both use `BufReader::lines()` rather than `read_to_string` + `.lines()`, so a multi-megabyte Claude Code / Codex JSONL never materializes as a single `String`. Peak working set during load is bounded by the longest single line (typically a few KB). Line-number context is preserved for format-drift error messages. Gemini / Generic / LangChain / Vercel / OTel-JSON parsers still use `read_to_string` because those formats are single-JSON-object files where streaming gains nothing.
 - **`--bench` flag**: hidden diagnostic flag (both on the top-level CLI and on `agx corpus`). When set, agx prints load / walk / aggregate timings to stderr after the main output. Keeps stdout pipeable. Use when filing performance-regression reports.
 
+## Stepwise suite context
+
+agx is the read-only middle tool in a three-tool suite — **stepwise** —
+under the `brevity1swos` GitHub org. Shared UX and integration contracts
+live in [docs/suite-conventions.md](docs/suite-conventions.md), maintained
+**verbatim** against the copies in `rgx/docs/` and `sift/docs/`. When
+editing that file in agx, the change must also land in rgx and sift in
+the same release cycle; divergence is a smell, never a feature.
+
+Roles, worth internalizing before changing public surfaces:
+
+- **rgx** — regex debugger. Owns regex UX; don't grow regex-authoring
+  features in agx.
+- **agx** (this project) — session timeline viewer. Read-only by default.
+  Owns timeline / corpus / cost / semantic-search UX.
+- **sift** — AI write review gate (writable sibling). Consumes agx's
+  `--export json` over subprocess. Missing from the tree is fine; agx
+  never imports or requires sift.
+
+Two contracts that sift depends on and therefore need extra care during
+refactors:
+
+- **`agx --export json <session>`** — stable schema `{totals, steps,
+  annotations?}`. Field renames or removals are breaking changes that
+  require a minor-version bump and a note in the cross-tool compatibility
+  table in README.
+- **`agx --jump-to <session>:<step>`** — planned for Phase 5.5. Sift's
+  `t`-keybind Timeline-jump targets this flag; land the semantics
+  before sift ships the deep integration.
+
+Cross-tool integrations follow suite-conventions §6: feature-detect at
+runtime (never require a sibling at build time), silent degrade with a
+status-bar hint when a sibling is missing, subprocess boundary only (no
+shared Rust crates), named integrations (*Timeline jump*, *Policy debug*,
+*Regex lens*), one-way coupling (consumers know producers, producers
+never know their consumers). agx is a producer for sift and never a
+consumer of sift.
+
 ## Code Conventions
 
 - **Formatting**: default rustfmt (`cargo fmt`)
@@ -125,3 +163,6 @@ src/
 - Do not suppress clippy warnings without a `#[allow]` + comment explaining why.
 - Do not commit real session JSONL/JSON files as fixtures. Use the synthetic fixtures in `assets/` or add new synthetic ones following the same pattern — obviously-fake UUIDs, generic content, zero personal data.
 - Do not unify the three parsers behind a shared `Entry` trait/enum "for cleanliness." Each format is different enough that unification would leak format-specific concerns into the shared type. Parsers produce `Vec<Step>` directly and the uniformity happens at the Step layer, not the Entry layer.
+- Do not let `docs/suite-conventions.md` drift from the copies in rgx and sift. The doc is load-bearing for cross-tool UX and is maintained by discipline, not CI. If you change something in agx that implies a conventions update, propagate the same change to the other two repos in the same release cycle — or revert the agx change and open a conventions-first discussion.
+- Do not reach into sift. agx is the producer side of the agx ↔ sift contract; sift consumes agx's `--export json` and (future) `--jump-to` CLI, but agx never spawns sift, never reads sift's `.sift/` directory, and never renders sift's ledger state in the timeline. One-way coupling per suite-conventions §6.5.
+- Do not add features that duplicate sift's review gate or rgx's regex authoring surface. The stepwise thesis (human oversight without efficiency cost) relies on each tool staying narrow. If agx starts showing writable-review UI or regex-authoring widgets, it's crept into the sibling's domain — defer instead.
