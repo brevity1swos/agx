@@ -72,6 +72,11 @@ pub struct App {
     heatmap: Vec<u8>,
     show_heatmap: bool,
     show_stats: bool,
+    /// When true, render the annotations list overlay. Toggled by `A`
+    /// in normal mode. `annotations_list_state` tracks the cursor inside
+    /// the overlay, independent of the main timeline's `list_state`.
+    show_annotations: bool,
+    annotations_list_state: ListState,
     /// When true, suppress cost estimates in status bar, detail pane, and
     /// stats overlay. Token counts are still shown. Set via `--no-cost`.
     no_cost: bool,
@@ -124,6 +129,8 @@ impl App {
             heatmap: Vec::new(),
             show_heatmap: false,
             show_stats: false,
+            show_annotations: false,
+            annotations_list_state: ListState::default(),
             no_cost,
             session_totals: SessionTotals::default(),
             annotations: crate::annotations::Annotations::default(),
@@ -163,6 +170,61 @@ impl App {
 
     fn toggle_stats(&mut self) {
         self.show_stats = !self.show_stats;
+    }
+
+    /// Open or close the annotations list overlay. On open, seed the
+    /// overlay cursor at the first annotation so `Enter` always jumps
+    /// somewhere meaningful. When there are no annotations, open with
+    /// an empty `ListState` and render the empty-state hint.
+    fn toggle_annotations_list(&mut self) {
+        if self.show_annotations {
+            self.show_annotations = false;
+            return;
+        }
+        self.show_annotations = true;
+        let has_any = self.annotations.iter().next().is_some();
+        self.annotations_list_state
+            .select(if has_any { Some(0) } else { None });
+    }
+
+    /// Move the annotations-overlay cursor by `delta` (positive = down).
+    /// Clamped to the valid range; no-op when the list is empty.
+    fn annotations_cursor_move(&mut self, delta: isize) {
+        let len = self.annotations.iter().count();
+        if len == 0 {
+            return;
+        }
+        let cur = self.annotations_list_state.selected().unwrap_or(0);
+        let next = (cur as isize + delta).clamp(0, (len - 1) as isize);
+        self.annotations_list_state.select(Some(next as usize));
+    }
+
+    /// Jump the main timeline cursor to the annotation currently selected
+    /// in the overlay. Closes the overlay as a side effect so the user
+    /// lands on the step ready to act on it. When the target step is
+    /// hidden by the active filter, surface that via `status_msg`
+    /// instead of silently moving somewhere else.
+    fn jump_to_selected_annotation(&mut self) {
+        let Some(overlay_idx) = self.annotations_list_state.selected() else {
+            self.show_annotations = false;
+            return;
+        };
+        let Some((orig_idx, _)) = self.annotations.iter().nth(overlay_idx) else {
+            self.show_annotations = false;
+            return;
+        };
+        self.show_annotations = false;
+        match self.filtered_view.iter().position(|&i| i == orig_idx) {
+            Some(view_idx) => {
+                self.list_state.select(Some(view_idx));
+            }
+            None => {
+                self.status_msg = Some(format!(
+                    "annotation on step {} is hidden by the active filter",
+                    orig_idx + 1
+                ));
+            }
+        }
     }
 
     fn copy_current_step(&mut self) {
@@ -1153,6 +1215,7 @@ fn run_loop(
                         Style::default().add_modifier(Modifier::BOLD),
                     )),
                     Line::from("  a               add / edit / clear annotation on current step (saved to ~/.agx/notes/)"),
+                    Line::from("  A               list all annotations (Enter jumps to step, Esc closes)"),
                     Line::from("  y               copy current step to clipboard"),
                     Line::from("  h               toggle heatmap mode (tool-call density)"),
                     Line::from("  ? / F1          toggle this help"),
@@ -1326,6 +1389,75 @@ fn run_loop(
                 f.render_widget(Clear, area);
                 f.render_widget(widget, area);
             }
+
+            if app.show_annotations {
+                // Collect once into an owned vec so the ListState navigation
+                // and the row rendering see identical ordering.
+                let notes: Vec<(usize, String, String)> = app
+                    .annotations
+                    .iter()
+                    .map(|(idx, note)| {
+                        let label = app
+                            .steps
+                            .get(idx)
+                            .map(|s| s.label.clone())
+                            .unwrap_or_else(|| "(missing step)".into());
+                        (idx, label, note.text.clone())
+                    })
+                    .collect();
+                let count = notes.len();
+                let items: Vec<ListItem> = if count == 0 {
+                    vec![ListItem::new(Line::from(Span::styled(
+                        "  (no annotations — press `a` on a step to add one)",
+                        Style::default().fg(Color::DarkGray),
+                    )))]
+                } else {
+                    notes
+                        .iter()
+                        .map(|(idx, label, text)| {
+                            let preview = truncate(text, 60);
+                            ListItem::new(vec![
+                                Line::from(vec![
+                                    Span::styled(
+                                        format!("step {:>4}  ", idx + 1),
+                                        Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+                                    ),
+                                    Span::styled(
+                                        truncate(label, 50),
+                                        Style::default().fg(Color::White),
+                                    ),
+                                ]),
+                                Line::from(Span::styled(
+                                    format!("           {preview}"),
+                                    Style::default().fg(Color::Gray),
+                                )),
+                            ])
+                        })
+                        .collect()
+                };
+                let title = format!(" annotations ({count}) — Enter jumps · Esc closes ");
+                // 4 lines of chrome (border top + border bottom + header + footer hint) +
+                // 2 lines per note (label + preview); 1 line when empty.
+                let body_lines = if count == 0 { 1 } else { count * 2 };
+                let height = u16::try_from(body_lines + 4)
+                    .unwrap_or(u16::MAX)
+                    .clamp(6, 20);
+                let area = centered_rect(80, height, f.area());
+                let list = List::new(items)
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(title)
+                            .border_style(Style::default().fg(Color::Magenta)),
+                    )
+                    .highlight_style(
+                        Style::default()
+                            .add_modifier(Modifier::REVERSED)
+                            .add_modifier(Modifier::BOLD),
+                    );
+                f.render_widget(Clear, area);
+                f.render_stateful_widget(list, area, &mut app.annotations_list_state);
+            }
         })?;
 
         let poll_timeout = if reload_fn.is_some() {
@@ -1370,6 +1502,18 @@ fn run_loop(
             // Stats overlay: any key dismisses.
             if app.show_stats {
                 app.show_stats = false;
+                continue;
+            }
+
+            // Annotations overlay: navigable — j/k/arrows move, Enter
+            // jumps to the selected note's step, any other key closes.
+            if app.show_annotations {
+                match key.code {
+                    KeyCode::Down | KeyCode::Char('j') => app.annotations_cursor_move(1),
+                    KeyCode::Up | KeyCode::Char('k') => app.annotations_cursor_move(-1),
+                    KeyCode::Enter => app.jump_to_selected_annotation(),
+                    _ => app.show_annotations = false,
+                }
                 continue;
             }
 
@@ -1464,6 +1608,10 @@ fn run_loop(
                 KeyCode::Char('a') => {
                     app.clear_count();
                     app.enter_annotation_mode();
+                }
+                KeyCode::Char('A') => {
+                    app.clear_count();
+                    app.toggle_annotations_list();
                 }
                 KeyCode::Char('n') => {
                     let n = app.take_count();
@@ -2165,5 +2313,78 @@ mod tests {
             app.next();
         }
         assert_eq!(app.list_state.selected(), Some(3));
+    }
+
+    #[test]
+    fn toggle_annotations_list_opens_and_closes() {
+        let mut app = App::new(sample_steps(), false);
+        app.annotations.set(1, "note on step 2");
+        assert!(!app.show_annotations);
+        app.toggle_annotations_list();
+        assert!(app.show_annotations);
+        assert_eq!(app.annotations_list_state.selected(), Some(0));
+        app.toggle_annotations_list();
+        assert!(!app.show_annotations);
+    }
+
+    #[test]
+    fn toggle_annotations_list_with_no_notes_opens_with_empty_selection() {
+        let mut app = App::new(sample_steps(), false);
+        app.toggle_annotations_list();
+        assert!(app.show_annotations);
+        assert_eq!(app.annotations_list_state.selected(), None);
+    }
+
+    #[test]
+    fn annotations_cursor_move_clamps_to_bounds() {
+        let mut app = App::new(sample_steps(), false);
+        app.annotations.set(0, "a");
+        app.annotations.set(2, "c");
+        app.annotations.set(4, "e");
+        app.toggle_annotations_list();
+        assert_eq!(app.annotations_list_state.selected(), Some(0));
+        app.annotations_cursor_move(1);
+        assert_eq!(app.annotations_list_state.selected(), Some(1));
+        app.annotations_cursor_move(10);
+        assert_eq!(
+            app.annotations_list_state.selected(),
+            Some(2),
+            "cursor should clamp at the last note"
+        );
+        app.annotations_cursor_move(-100);
+        assert_eq!(app.annotations_list_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn jump_to_selected_annotation_moves_main_cursor_and_closes_overlay() {
+        let mut app = App::new(sample_steps(), false);
+        app.annotations.set(3, "revisit this tool call");
+        app.toggle_annotations_list();
+        app.jump_to_selected_annotation();
+        assert!(!app.show_annotations);
+        // Step 3 in the underlying steps is 0-indexed → filtered_view
+        // is identity by default, so selected() should be 3.
+        assert_eq!(app.list_state.selected(), Some(3));
+    }
+
+    #[test]
+    fn jump_to_filtered_annotation_reports_hidden_via_status() {
+        let mut app = App::new(sample_steps(), false);
+        app.annotations.set(3, "filtered");
+        // Filter to rows that don't contain step 3's label — sample_steps()
+        // step 3 is a tool_use for Bash; filter on "write" (user text)
+        // to hide it.
+        app.apply_filter("write");
+        app.toggle_annotations_list();
+        app.jump_to_selected_annotation();
+        assert!(!app.show_annotations);
+        assert!(
+            app.status_msg
+                .as_deref()
+                .unwrap_or("")
+                .contains("hidden by the active filter"),
+            "expected filter-hidden status, got {:?}",
+            app.status_msg
+        );
     }
 }

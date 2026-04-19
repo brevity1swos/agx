@@ -101,10 +101,13 @@ agx --after-step 100 --before-step 500 <session>
 agx --after 30m --before 1h <session>       # Duration grammar: 30s / 5m / 2h / 1d, or compounds like 1h30m
 # Inside the TUI: `:@1h30m` jumps to the first step ≥ that offset from session start
 
-# Annotate a step: press `a` in the TUI. Notes persist under ~/.agx/notes/
-# and render as a magenta `*` prefix in the list + `[note: ...]` in the detail pane.
+# Annotate a step: press `a` in the TUI. Notes persist under ~/.agx/notes/ and
+# render as a magenta `*` prefix in the list + `[note: ...]` in the detail pane.
+# Press `A` for a list of every note with Enter-to-jump navigation.
 
-# Export a transcript to stdout — formats: md | html | json
+# Export a transcript to stdout — formats: md | html | json. Notes (if any)
+# are surfaced in all three: md blockquote, html `<div class="note">`, json
+# `annotations` array.
 agx --export md   <session> > session.md
 agx --export html <session> > session.html
 agx --export json <session> > session.json
@@ -118,6 +121,7 @@ agx --debug-unknowns <session>
 agx corpus <dir>
 agx corpus <dir> --filter model=claude-opus-4-6 --filter tool=Bash
 agx corpus <dir> --filter errored --json       # pretty-printed stats JSON
+agx corpus <dir> --filter annotated             # keep only sessions with ≥1 annotation
 agx corpus <dir> --tui                         # interactive browser: list + detail, Enter drills in
 agx corpus <dir> --jsonl | jq '.cost_usd'      # one JSON-per-session on stdout; parse errors on stderr
 agx corpus <dir> --fail-on-errored             # exit nonzero if any parse error / tool error — CI-friendly

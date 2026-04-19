@@ -657,7 +657,7 @@ diff, deeper search, and notes that survive session edits.
       days; would require a date prefix or day-of-session heuristic).
       `..=` inclusive-end range syntax (trivial add when asked for).
 
-**4.3 — Annotations** (MVP shipped; overlay + export + corpus filter deferred)
+**4.3 — Annotations** (shipped end-to-end: MVP + overlay + export + corpus filter)
 - [x] `a` in the TUI opens an annotation prompt for the selected
       step. Prefills with the existing note for edit-in-place, or
       opens blank for new notes. Enter upserts, empty text deletes,
@@ -688,10 +688,23 @@ diff, deeper search, and notes that survive session edits.
       format / hash determinism). Race-safe via a module-local
       `Mutex<()>` around `AGX_HOME` writes since `cargo test` runs
       in parallel by default.
-- [ ] **Deferred** (tracked as 4.3 follow-ups):
-      - `A` list-overlay showing all annotations + jump-to
-      - Export integration: notes in md/html/json output
-      - `agx corpus --filter annotated` predicate
+- [x] `A` list-overlay showing all annotations, with `j`/`k` navigation
+      and `Enter` to jump the main timeline cursor to the selected
+      step. Esc (or any other key) closes. Reports
+      "hidden by the active filter" via `status_msg` when the
+      target step is filtered out, instead of silently moving
+      somewhere else.
+- [x] Export integration: `--export md` emits a blockquoted
+      `> **note**: …` below the per-step meta; `--export html`
+      renders a magenta-bordered `<div class="note">`;
+      `--export json` adds an optional top-level `annotations`
+      array of `{step_index, text, created_at_ms, updated_at_ms}`.
+      All three omit the annotations section entirely when the
+      session has no notes (keeps common-case output small).
+- [x] `agx corpus --filter annotated` keeps sessions with ≥1 note.
+      `ParsedSession.annotation_count` + `SessionLine.annotation_count`
+      are loaded eagerly during the parallel scan and surfaced in
+      `--jsonl` output for downstream tooling.
 
 **4.4 — Semantic search (opt-in feature flag)**
 - [ ] `--features embedding-search` compile flag, default off

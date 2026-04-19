@@ -44,24 +44,30 @@ pub enum Filter {
     /// `--filter errored` — keep sessions where at least one tool_result
     /// matched `is_error_result`.
     Errored,
+    /// `--filter annotated` — keep sessions with at least one user note
+    /// stored under `~/.agx/notes/`.
+    Annotated,
 }
 
 impl Filter {
-    /// Parse one `--filter` value. Accepts `model=X`, `tool=X`, or the
-    /// bare keyword `errored`.
+    /// Parse one `--filter` value. Accepts `model=X`, `tool=X`, or one
+    /// of the bare keywords `errored` / `annotated`.
     pub fn parse(s: &str) -> Result<Self> {
         let s = s.trim();
         if s.eq_ignore_ascii_case("errored") {
             return Ok(Filter::Errored);
         }
-        let (key, value) = s
-            .split_once('=')
-            .ok_or_else(|| anyhow!("--filter expects `key=value` or `errored`, got `{s}`"))?;
+        if s.eq_ignore_ascii_case("annotated") {
+            return Ok(Filter::Annotated);
+        }
+        let (key, value) = s.split_once('=').ok_or_else(|| {
+            anyhow!("--filter expects `key=value`, `errored`, or `annotated`, got `{s}`")
+        })?;
         match key.trim() {
             "model" => Ok(Filter::Model(value.trim().to_string())),
             "tool" => Ok(Filter::Tool(value.trim().to_string())),
             other => Err(anyhow!(
-                "unknown --filter key `{other}` (expected `model`, `tool`, or `errored`)"
+                "unknown --filter key `{other}` (expected `model`, `tool`, `errored`, or `annotated`)"
             )),
         }
     }
@@ -74,6 +80,7 @@ impl Filter {
                 .iter()
                 .any(|s| s.name.eq_ignore_ascii_case(t)),
             Filter::Errored => parsed.tool_stats.iter().any(|s| s.error_count > 0),
+            Filter::Annotated => parsed.annotation_count > 0,
         }
     }
 }
@@ -92,6 +99,10 @@ pub struct ParsedSession {
     /// corpus TUI to sort by recency. `None` when we couldn't stat the
     /// file (permission error, file replaced mid-walk, etc).
     pub mtime_secs: Option<u64>,
+    /// Number of annotations stored for this session at the time of the
+    /// scan (read from `~/.agx/notes/`). Used by `Filter::Annotated`
+    /// and surfaced in `--jsonl` output for downstream tooling.
+    pub annotation_count: usize,
 }
 
 #[derive(Debug)]
@@ -156,6 +167,12 @@ pub fn load_parallel(paths: &[PathBuf]) -> (Vec<ParsedSession>, Vec<ParseError>)
                     .ok()
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                     .map(|d| d.as_secs());
+                // Load annotation count eagerly during the parallel
+                // parse phase — it's one small disk read per session
+                // (the notes JSON under ~/.agx/notes/), cheap enough
+                // to do unconditionally so we can filter / display
+                // without a second pass.
+                let annotation_count = crate::annotations::Annotations::load_for(&path).notes.len();
                 parsed.push(ParsedSession {
                     path,
                     format: fmt,
@@ -163,6 +180,7 @@ pub fn load_parallel(paths: &[PathBuf]) -> (Vec<ParsedSession>, Vec<ParseError>)
                     tool_stats,
                     step_count: steps.len(),
                     mtime_secs,
+                    annotation_count,
                 });
             }
             // Silent drop: file wasn't a recognized session at all. We
@@ -546,6 +564,7 @@ struct SessionLine {
     models: Vec<String>,
     tool_counts: Vec<ToolLine>,
     error_count: usize,
+    annotation_count: usize,
     mtime_secs: Option<u64>,
 }
 
@@ -577,6 +596,7 @@ fn session_to_line(s: &ParsedSession) -> SessionLine {
             })
             .collect(),
         error_count: s.tool_stats.iter().map(|t| t.error_count).sum(),
+        annotation_count: s.annotation_count,
         mtime_secs: s.mtime_secs,
     }
 }
@@ -615,6 +635,7 @@ mod tests {
             totals,
             tool_stats,
             mtime_secs: None,
+            annotation_count: 0,
         }
     }
 

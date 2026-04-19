@@ -634,6 +634,7 @@ mod tests {
                 Vec::new()
             },
             mtime_secs: mtime,
+            annotation_count: 0,
         }
     }
 

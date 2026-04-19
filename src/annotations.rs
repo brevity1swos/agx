@@ -78,11 +78,8 @@ impl Annotations {
         }
     }
 
-    /// True when no notes are stored. Reserved for Phase 4.3
-    /// follow-ups — the `A` list-overlay and export integrations use
-    /// this to decide whether to render a "notes" section at all.
-    /// `#[allow(dead_code)]` until those land.
-    #[allow(dead_code)]
+    /// True when no notes are stored. Used by the export integrations
+    /// to skip emitting a "notes" section and by tests.
     pub fn is_empty(&self) -> bool {
         self.notes.is_empty()
     }
@@ -130,12 +127,9 @@ impl Annotations {
 
     /// Iterate notes in numeric step-index order. `BTreeMap` iterates
     /// string keys lexicographically, which would put "12" before "2";
-    /// we collect and re-sort by the parsed usize instead.
-    ///
-    /// `#[allow(dead_code)]` until the Phase 4.3 follow-up wires the
-    /// `A` list overlay that consumes this. Keeping it here as the
-    /// natural API shape for that overlay.
-    #[allow(dead_code)]
+    /// we collect and re-sort by the parsed usize instead. Consumed by
+    /// the TUI `A` list overlay and by the export writers (md / html /
+    /// json) for their per-step note sections.
     pub fn iter(&self) -> impl Iterator<Item = (usize, &Note)> {
         let mut items: Vec<(usize, &Note)> = self
             .notes

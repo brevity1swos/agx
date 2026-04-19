@@ -371,10 +371,19 @@ fn main() -> Result<()> {
 
     if let Some(fmt) = cli.export {
         let totals = compute_session_totals(&steps);
+        // Load annotations eagerly for export so the rendered output
+        // reflects on-disk notes. Fault-tolerant: a missing or malformed
+        // notes file returns an empty set without erroring.
+        let annotations = annotations::Annotations::load_for(&session_path);
+        let ann_ref = if annotations.is_empty() {
+            None
+        } else {
+            Some(&annotations)
+        };
         let out = match fmt {
-            ExportFormat::Json => export::json(&steps, &totals)?,
-            ExportFormat::Md => export::markdown(&steps, &totals, cli.no_cost),
-            ExportFormat::Html => export::html(&steps, &totals, cli.no_cost),
+            ExportFormat::Json => export::json(&steps, &totals, ann_ref)?,
+            ExportFormat::Md => export::markdown(&steps, &totals, cli.no_cost, ann_ref),
+            ExportFormat::Html => export::html(&steps, &totals, cli.no_cost, ann_ref),
         };
         print!("{out}");
         return Ok(());
