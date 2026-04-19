@@ -144,9 +144,22 @@ fn walk(root: &Path, max_depth: usize, out: &mut Vec<PathBuf>) {
 ///
 /// Test hook: when `AGX_CORPUS_SERIAL=1` is set we skip rayon entirely.
 /// Useful in tests where thread-pool init noise would confuse `cargo test`.
+/// Three-way outcome for a single-file corpus load. Dedicated enum
+/// (rather than smuggling "skip" through an `anyhow` error with a
+/// magic substring) so misclassification can't be introduced by a
+/// future refactor that reshuffles error messages.
+enum LoadOutcome {
+    Ok(Format, Vec<Step>),
+    /// File wasn't recognized as any session format, or was a binary
+    /// blob we shouldn't try to parse (e.g. images in an OtelProto-
+    /// detection fallback when the feature is off). Dropped silently.
+    Skip,
+    Err(anyhow::Error),
+}
+
 /// Per-path load result — kept as a type alias so clippy's
 /// `type_complexity` lint doesn't fire on the collect site below.
-type RawLoad = (PathBuf, Result<(Format, Vec<Step>)>);
+type RawLoad = (PathBuf, LoadOutcome);
 
 pub fn load_parallel(paths: &[PathBuf]) -> (Vec<ParsedSession>, Vec<ParseError>) {
     let raw: Vec<RawLoad> = if std::env::var_os("AGX_CORPUS_SERIAL").is_some() {
@@ -159,7 +172,7 @@ pub fn load_parallel(paths: &[PathBuf]) -> (Vec<ParsedSession>, Vec<ParseError>)
     let mut errors = Vec::new();
     for (path, result) in raw {
         match result {
-            Ok((fmt, steps)) => {
+            LoadOutcome::Ok(fmt, steps) => {
                 let totals = compute_session_totals(&steps);
                 let tool_stats = compute_tool_stats(&steps);
                 let mtime_secs = std::fs::metadata(&path)
@@ -183,40 +196,36 @@ pub fn load_parallel(paths: &[PathBuf]) -> (Vec<ParsedSession>, Vec<ParseError>)
                     annotation_count,
                 });
             }
-            // Silent drop: file wasn't a recognized session at all. We
-            // use a sentinel error kind (AGX_SKIP) to distinguish this
-            // from real parse failures.
-            Err(e) if format!("{e:?}").contains("AGX_SKIP") => {}
-            Err(e) => errors.push(ParseError { path, error: e }),
+            LoadOutcome::Skip => {}
+            LoadOutcome::Err(error) => errors.push(ParseError { path, error }),
         }
     }
     (parsed, errors)
 }
 
-fn load_one(path: &Path) -> Result<(Format, Vec<Step>)> {
+fn load_one(path: &Path) -> LoadOutcome {
     // Detection failure → silent skip. Detection succeeds → attempt
     // parse and surface any failure as a real error.
     let fmt = match format::detect(path) {
         Ok(f) => f,
-        Err(_) => return Err(anyhow!("AGX_SKIP: not a recognized session file")),
+        Err(_) => return LoadOutcome::Skip,
     };
     match load_session(path) {
-        Ok(steps) => Ok((fmt, steps)),
+        Ok(steps) => LoadOutcome::Ok(fmt, steps),
         Err(e) => {
-            // Non-UTF-8 files route to OtelProto at detection time, but if
-            // the `otel-proto` feature is off (the default) load fails with
-            // a rebuild-with-feature error. For corpus mode, those files
-            // are almost certainly unrelated binaries (images, PDFs,
+            // Non-UTF-8 files route to OtelProto at detection time. When
+            // the `otel-proto` feature is off (the default build), those
+            // files are almost always unrelated binaries (images, PDFs,
             // archives) rather than real OTLP protobuf exports the user
-            // forgot to compile support for. Silently skip instead of
-            // spamming the "rebuild with --features" message across
-            // every image in a directory tree.
-            if fmt == Format::OtelProto && format!("{e:#}").contains("--features otel-proto") {
-                return Err(anyhow!(
-                    "AGX_SKIP: binary file, otel-proto feature disabled"
-                ));
+            // forgot to compile support for. Skip them silently rather
+            // than spamming the "rebuild with --features" message across
+            // every image in the tree. The compile-time `cfg!` is
+            // strictly stronger than matching on the stub error message:
+            // it triggers on any load failure, not just the exact string.
+            if fmt == Format::OtelProto && !cfg!(feature = "otel-proto") {
+                return LoadOutcome::Skip;
             }
-            Err(e)
+            LoadOutcome::Err(e)
         }
     }
 }
@@ -418,20 +427,13 @@ pub fn run(args: &CorpusArgs) -> Result<()> {
     // end via `anyhow::bail` (exit code 1 via anyhow's normal error
     // path — simpler than reserving a distinct code 2 and bypassing
     // anyhow's reporting for this one case).
-    let fail_on_errored = args.fail_on_errored && {
-        let tool_errors: usize = parsed
-            .iter()
-            .flat_map(|p| p.tool_stats.iter())
-            .map(|t| t.error_count)
-            .sum();
-        !errors.is_empty() || tool_errors > 0
-    };
     let parse_error_count = errors.len();
     let tool_error_count: usize = parsed
         .iter()
         .flat_map(|p| p.tool_stats.iter())
         .map(|t| t.error_count)
         .sum();
+    let fail_on_errored = args.fail_on_errored && (parse_error_count > 0 || tool_error_count > 0);
 
     if args.tui {
         // Drop into the interactive corpus TUI. When the user selects a

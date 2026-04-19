@@ -6,7 +6,7 @@ use std::collections::HashMap;
 pub(crate) const LABEL_PREVIEW_WIDTH: usize = 60;
 pub(crate) const RESULT_PREVIEW_WIDTH: usize = 50;
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct Step {
     pub label: String,
     pub detail: String,
@@ -136,9 +136,10 @@ pub(crate) fn attach_usage_to_first(
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StepKind {
+    #[default]
     UserText,
     ToolResult,
     AssistantText,
@@ -364,14 +365,7 @@ pub(crate) fn user_text_step(text: &str) -> Step {
         label: format!("[user]   {}", truncate(text, LABEL_PREVIEW_WIDTH)),
         detail: text.to_string(),
         kind: StepKind::UserText,
-        tool_name: None,
-        timestamp_ms: None,
-        duration_ms: None,
-        model: None,
-        tokens_in: None,
-        tokens_out: None,
-        cache_read: None,
-        cache_create: None,
+        ..Step::default()
     }
 }
 
@@ -380,14 +374,7 @@ pub(crate) fn assistant_text_step(text: &str) -> Step {
         label: format!("[asst]   {}", truncate(text, LABEL_PREVIEW_WIDTH)),
         detail: text.to_string(),
         kind: StepKind::AssistantText,
-        tool_name: None,
-        timestamp_ms: None,
-        duration_ms: None,
-        model: None,
-        tokens_in: None,
-        tokens_out: None,
-        cache_read: None,
-        cache_create: None,
+        ..Step::default()
     }
 }
 
@@ -397,13 +384,7 @@ pub(crate) fn tool_use_step(id: &str, name: &str, input_pretty: &str) -> Step {
         detail: format!("Tool: {name}\nID: {id}\n\nInput:\n{input_pretty}"),
         kind: StepKind::ToolUse,
         tool_name: Some(name.to_string()),
-        timestamp_ms: None,
-        duration_ms: None,
-        model: None,
-        tokens_in: None,
-        tokens_out: None,
-        cache_read: None,
-        cache_create: None,
+        ..Step::default()
     }
 }
 
@@ -426,13 +407,7 @@ pub(crate) fn tool_result_step(
         detail: format!("Tool: {display_name}\nID: {id}\n\n{input_section}Result:\n{result}"),
         kind: StepKind::ToolResult,
         tool_name: tool_name.map(str::to_string),
-        timestamp_ms: None,
-        duration_ms: None,
-        model: None,
-        tokens_in: None,
-        tokens_out: None,
-        cache_read: None,
-        cache_create: None,
+        ..Step::default()
     }
 }
 
@@ -560,10 +535,17 @@ pub(crate) fn truncate(s: &str, n: usize) -> String {
 }
 
 pub(crate) fn short_id(id: &str) -> String {
-    if id.len() <= 12 {
+    // Char-based bounds — `&id[..11]` would panic if the id contains a
+    // multi-byte UTF-8 codepoint whose bytes straddle index 11 (and
+    // `tool_use_id` is attacker-controllable via session files).
+    // Preserves the original byte-length contract: strings of ≤12
+    // chars pass through unchanged; longer ones truncate to 11 chars
+    // plus an ellipsis.
+    if id.chars().count() <= 12 {
         id.to_string()
     } else {
-        format!("{}…", &id[..11])
+        let head: String = id.chars().take(11).collect();
+        format!("{head}…")
     }
 }
 
@@ -905,6 +887,18 @@ mod tests {
     fn short_id_handles_exact_twelve_boundary() {
         assert_eq!(short_id("123456789012"), "123456789012");
         assert_eq!(short_id("1234567890123"), "12345678901…");
+    }
+
+    #[test]
+    fn short_id_does_not_panic_on_multibyte_utf8_near_boundary() {
+        // The old `&id[..11]` slice would panic on an input where a
+        // 4-byte emoji begins at byte index 11 (byte index falls
+        // inside the codepoint). 11 ASCII chars + 😀 + "xyz" = 15
+        // chars / 18 bytes, so it's long enough to force truncation.
+        let id = "abcdefghijk😀xyz";
+        let out = short_id(id);
+        // Takes first 11 chars cleanly and appends the ellipsis.
+        assert_eq!(out, "abcdefghijk…");
     }
 
     fn result_step_with_body(body: &str) -> Step {

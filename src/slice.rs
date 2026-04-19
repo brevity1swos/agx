@@ -175,9 +175,14 @@ pub fn slice_steps(
     after_ms: Option<u64>,
     before_ms: Option<u64>,
 ) -> Vec<Step> {
-    let session_start_ms = steps.iter().find_map(|s| s.timestamp_ms);
     let has_time_filter = after_ms.is_some() || before_ms.is_some();
-    let apply_time = has_time_filter && session_start_ms.is_some();
+    // Resolve the time-filter anchor once. `None` → time filter is a
+    // no-op for this session (either no timestamps anywhere, or no
+    // `--after` / `--before` in play). Either way the closure below
+    // can treat the time branch as inactive with a single check.
+    let time_anchor = has_time_filter
+        .then(|| steps.iter().find_map(|s| s.timestamp_ms))
+        .flatten();
 
     steps
         .into_iter()
@@ -186,8 +191,7 @@ pub fn slice_steps(
             if !range.contains(*idx) {
                 return false;
             }
-            if apply_time {
-                let start = session_start_ms.unwrap();
+            if let Some(start) = time_anchor {
                 let Some(ts) = step.timestamp_ms else {
                     // Step has no timestamp in a session that does —
                     // drop it rather than include anomalously.

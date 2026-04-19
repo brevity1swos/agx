@@ -12,18 +12,24 @@ pub enum Entry {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)] // uuid/parent_uuid/timestamp are parsed for future tree-walking and time-travel
 pub struct UserEntry {
+    // Parsed but only read by tests + reserved for future tree-walking
+    // (parent_uuid). timestamp + message are actively read from
+    // timeline::build().
+    #[allow(dead_code)]
     pub uuid: String,
     #[serde(rename = "parentUuid")]
+    #[allow(dead_code)]
     pub parent_uuid: Option<String>,
     pub timestamp: Option<String>,
     pub message: UserMessage,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)] // role parsed for future role-aware rendering
 pub struct UserMessage {
+    /// Reserved for future role-aware rendering; serde parses it but
+    /// no reader currently exists.
+    #[allow(dead_code)]
     pub role: String,
     pub content: UserContent,
 }
@@ -57,18 +63,19 @@ pub enum ToolResultContent {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)] // uuid/parent_uuid/timestamp are parsed for future tree-walking and time-travel
 pub struct AssistantEntry {
+    #[allow(dead_code)]
     pub uuid: String,
     #[serde(rename = "parentUuid")]
+    #[allow(dead_code)]
     pub parent_uuid: Option<String>,
     pub timestamp: Option<String>,
     pub message: AssistantMessage,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)] // role parsed for future role-aware rendering
 pub struct AssistantMessage {
+    #[allow(dead_code)]
     pub role: String,
     pub content: Vec<AssistantContentItem>,
     /// Model name (e.g. "claude-opus-4-6"). Optional — older sessions may not

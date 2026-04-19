@@ -25,7 +25,7 @@ use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::{Shell, generate};
 use loader::load_session;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use timeline::{Step, compute_session_totals, compute_tool_stats, count_from_steps};
 
@@ -215,11 +215,19 @@ fn print_diff(path_a: &Path, steps_a: &[Step], path_b: &Path, steps_b: &[Step]) 
     let names_a: HashSet<String> = stats_a.iter().map(|s| s.name.clone()).collect();
     let names_b: HashSet<String> = stats_b.iter().map(|s| s.name.clone()).collect();
 
+    // Build lookup maps once so the pairing loop is O(both) instead of
+    // O(both · |stats|) linear scans, and no longer needs `.unwrap()`.
+    let map_a: HashMap<&str, &crate::timeline::ToolStats> =
+        stats_a.iter().map(|s| (s.name.as_str(), s)).collect();
+    let map_b: HashMap<&str, &crate::timeline::ToolStats> =
+        stats_b.iter().map(|s| (s.name.as_str(), s)).collect();
+
     let both: Vec<&String> = names_a.intersection(&names_b).collect();
     println!("  Tools in both ({}):", both.len());
     for name in &both {
-        let a = stats_a.iter().find(|s| &s.name == *name).unwrap();
-        let b = stats_b.iter().find(|s| &s.name == *name).unwrap();
+        let Some((a, b)) = map_a.get(name.as_str()).zip(map_b.get(name.as_str())) else {
+            continue;
+        };
         #[allow(clippy::cast_possible_wrap)]
         let delta = b.use_count as i64 - a.use_count as i64;
         let sign = if delta >= 0 { "+" } else { "" };

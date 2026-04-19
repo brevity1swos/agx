@@ -49,9 +49,11 @@ struct ScopeSpans {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)] // `name` is parsed for future use as a step label fallback
 struct Span {
+    /// Parsed for future use as a step label fallback when
+    /// `gen_ai.operation.name` is missing; no reader today.
     #[serde(default)]
+    #[allow(dead_code)]
     name: String,
     #[serde(default, rename = "startTimeUnixNano")]
     start_time_unix_nano: Option<String>,
