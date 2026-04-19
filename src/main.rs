@@ -97,6 +97,17 @@ struct Cli {
     #[arg(long, value_name = "RANGE")]
     range: Option<String>,
 
+    /// Launch the TUI with the cursor pre-positioned at this 0-indexed
+    /// step. Clamps to the visible range (post-slice). Ignored in
+    /// `--summary` / `--export` / `--diff`-text modes since those don't
+    /// render a cursor. The public contract for sift's Timeline-jump
+    /// integration per docs/suite-conventions.md §5 — sift's `t`
+    /// keybind in `sift review` spawns `agx --jump-to <N> <session>`
+    /// to land the user directly on the step a pending write came
+    /// from.
+    #[arg(long, value_name = "STEP")]
+    jump_to: Option<usize>,
+
     /// Optional subcommand. When present, overrides the single-session
     /// flow. Today only `corpus` exists — it aggregates stats across
     /// every session file in a directory tree.
@@ -431,6 +442,7 @@ fn main() -> Result<()> {
         reload_fn.as_deref(),
         cli.no_cost,
         Some(&session_path),
+        cli.jump_to,
     )?;
     Ok(())
 }

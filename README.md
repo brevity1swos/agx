@@ -101,6 +101,11 @@ agx --after-step 100 --before-step 500 <session>
 agx --after 30m --before 1h <session>       # Duration grammar: 30s / 5m / 2h / 1d, or compounds like 1h30m
 # Inside the TUI: `:@1h30m` jumps to the first step ≥ that offset from session start
 
+# Launch the TUI with the cursor pre-positioned at a specific step
+# (0-indexed; clamps to last if out of range). Public contract used by
+# sift's Timeline-jump integration.
+agx --jump-to 42 <session>
+
 # Annotate a step: press `a` in the TUI. Notes persist under ~/.agx/notes/ and
 # render as a magenta `*` prefix in the list + `[note: ...]` in the detail pane.
 # Press `A` for a list of every note with Enter-to-jump navigation.
@@ -266,8 +271,8 @@ Each parser produces `Vec<Step>` directly; `timeline::build()` is the Claude Cod
 - **[sift](https://github.com/brevity1swos/sift)** — AI write review
   gate. Sift consumes agx's `--export json` output for format-aware
   session parsing, and launches agx from its review TUI to give
-  timeline context to pending-write decisions. The Timeline-jump CLI
-  (`agx --jump-to <session>:<step>`) is scheduled for Phase 5.5.
+  timeline context to pending-write decisions via `agx --jump-to <N>
+  <session>` (shipped Phase 5.5).
 
 All three tools are independent — each earns its keep alone. Combined,
 they form **[stepwise](https://github.com/brevity1swos/stepwise)**, the

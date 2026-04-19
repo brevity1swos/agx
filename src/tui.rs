@@ -467,6 +467,28 @@ impl App {
         }
     }
 
+    /// Position the timeline cursor at a 0-indexed step, clamped to the
+    /// visible (filtered) range. Sets `status_msg` to a clamp warning
+    /// when the requested step is out of range. Extracted as a method
+    /// so the `--jump-to` CLI flag (sift Timeline-jump integration)
+    /// can be tested headlessly without stepping through the TUI event
+    /// loop.
+    pub(crate) fn apply_initial_step(&mut self, n: usize) {
+        if self.filtered_view.is_empty() {
+            return;
+        }
+        let max = self.filtered_view.len() - 1;
+        let target = n.min(max);
+        self.list_state.select(Some(target));
+        self.sync_conversation_cursor();
+        if n > max {
+            self.status_msg = Some(format!(
+                "--jump-to {n} out of range (session has {} steps); clamped to last",
+                self.filtered_view.len()
+            ));
+        }
+    }
+
     fn goto_step(&mut self, step_num: usize) {
         if self.filtered_view.is_empty() {
             self.status_msg = Some("no steps to navigate".into());
@@ -858,6 +880,7 @@ pub fn run(
     reload_fn: Option<&dyn Fn() -> Result<Vec<Step>>>,
     no_cost: bool,
     session_path: Option<&std::path::Path>,
+    initial_step: Option<usize>,
 ) -> Result<()> {
     enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
@@ -872,6 +895,14 @@ pub fn run(
     if let Some(path) = session_path {
         app.annotations = crate::annotations::Annotations::load_for(path);
         app.session_path = Some(path.to_path_buf());
+    }
+    // Apply `--jump-to` if provided. 0-indexed, clamped to the visible
+    // range. Out-of-bounds surfaces a status-bar warning rather than
+    // exit-erroring — the TUI still launches so the user can see the
+    // session they asked for. Per docs/suite-conventions.md §5 this is
+    // the public CLI surface sift's Timeline-jump integration targets.
+    if let Some(n) = initial_step {
+        app.apply_initial_step(n);
     }
 
     let result = run_loop(&mut terminal, &mut app, reload_fn);
@@ -2472,6 +2503,61 @@ mod tests {
         app.apply_search("//   ");
         let msg = app.status_msg.as_deref().unwrap_or("");
         assert!(msg.contains("empty semantic"), "got: {msg}");
+    }
+
+    #[test]
+    fn apply_initial_step_selects_valid_index() {
+        let mut app = App::new(sample_steps(), false);
+        app.apply_initial_step(3);
+        assert_eq!(app.list_state.selected(), Some(3));
+        assert!(app.status_msg.is_none());
+    }
+
+    #[test]
+    fn apply_initial_step_clamps_out_of_range_with_warning() {
+        let mut app = App::new(sample_steps(), false);
+        let last = sample_steps().len() - 1;
+        app.apply_initial_step(999);
+        assert_eq!(app.list_state.selected(), Some(last));
+        let msg = app.status_msg.as_deref().unwrap_or("");
+        assert!(
+            msg.contains("out of range") && msg.contains("clamped"),
+            "expected clamp warning, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn apply_initial_step_zero_is_fine() {
+        let mut app = App::new(sample_steps(), false);
+        app.apply_initial_step(0);
+        assert_eq!(app.list_state.selected(), Some(0));
+        assert!(app.status_msg.is_none());
+    }
+
+    #[test]
+    fn apply_initial_step_noop_on_empty_steps() {
+        let mut app = App::new(Vec::new(), false);
+        app.apply_initial_step(5);
+        // Empty session → no selection, no status message (nothing to
+        // warn about because the session is simply empty, which the
+        // rest of the TUI already handles).
+        assert_eq!(app.list_state.selected(), None);
+    }
+
+    #[test]
+    fn apply_initial_step_respects_active_filter() {
+        let mut app = App::new(sample_steps(), false);
+        // Filter to just tool-use rows (there are 2 in sample_steps).
+        app.apply_filter("[tool]");
+        assert_eq!(app.filtered_view.len(), 2);
+        // Out-of-range relative to filter → clamps to last filtered row.
+        app.apply_initial_step(5);
+        assert_eq!(app.list_state.selected(), Some(1));
+        let msg = app.status_msg.as_deref().unwrap_or("");
+        assert!(
+            msg.contains("2 steps"),
+            "expected filtered count, got: {msg}"
+        );
     }
 
     #[test]

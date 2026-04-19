@@ -291,7 +291,7 @@ pub fn run(sessions: Vec<ParsedSession>, stats: &CorpusStats, no_cost: bool) -> 
         // crashing out.
         match crate::loader::load_session(&path) {
             Ok(steps) => {
-                crate::tui::run(steps, None, no_cost, Some(&path))?;
+                crate::tui::run(steps, None, no_cost, Some(&path), None)?;
             }
             Err(e) => {
                 eprintln!("agx: failed to open {}: {}", path.display(), e);

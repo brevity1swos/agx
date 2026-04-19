@@ -857,26 +857,34 @@ lean into MCP as the tool-call metadata layer matures.
 - [ ] Ships behind `agx --experimental-replay` for at least two releases
       before graduation
 
-**5.5 — `--jump-to <session>:<step>` for stepwise Timeline jump**
-- [ ] CLI flag that launches the TUI with the cursor pre-positioned at a
-      specific 0-indexed step of a given session. Session may be supplied
-      as a file path or as a short session ID resolved via the browser
-      scan paths (`~/.claude/projects`, `~/.codex/sessions`,
-      `~/.gemini/tmp`).
-- [ ] Missing step → clamp to last, emit a status-bar warning rather
-      than error-exiting. Missing session path → exit 2 with the usual
-      load error path.
-- [ ] Completions contract: `agx --jump-to <TAB>` completes session
-      identifiers from the browser scan for the user's shell.
-- [ ] This is the CLI surface sift uses for its `t`-keybind Timeline
-      jump (per [docs/suite-conventions.md](docs/suite-conventions.md)
-      §1 and §5). Lands alongside branch / replay because its natural
-      implementation overlaps with the in-TUI `:N` jump and benefits
-      from the same event-loop entry point.
-- [ ] Stability commitment: once shipped, the flag's semantics are a
-      public contract per guiding principle 9; breaking changes require
-      a minor-version bump and a note in the cross-tool compatibility
-      table.
+**5.5 — `--jump-to <STEP>` for stepwise Timeline jump** ✅ (shipped 2026-04-19)
+- [x] `agx <session> --jump-to <N>` CLI flag. `N` is a 0-indexed step
+      in the visible (post-slice) range. Paired with the existing
+      positional session argument — sift's subprocess call is
+      `agx --jump-to 42 path/to/session.jsonl`.
+- [x] Out-of-range step → clamp to last visible row, surface a
+      status-bar warning. TUI still launches on the requested session
+      so the user isn't surprised by an exit code.
+- [x] Empty session → noop (no selection, no warning — matches how
+      every other navigation action handles empty state).
+- [x] Respects active slice (`--range`, `--after-step`, `--before-step`,
+      `--after`, `--before`): the step index is into the *filtered*
+      view, and the clamp count reflects the filtered size so sift's
+      "no-slice" default matches expectations.
+- [x] App logic extracted as `App::apply_initial_step(n)` so it's
+      testable headlessly without a terminal. 5 new unit tests cover
+      valid index, clamp-with-warning, zero-index, empty-steps noop,
+      and filter-aware clamp.
+- [x] Stability commitment: `--jump-to` is on the public-contract list
+      per guiding principle 9. Breaking changes require a minor-version
+      bump and an entry in the README cross-tool compatibility table.
+- [ ] **Deferred**: `<session>:<step>` colon syntax with session-ID
+      resolution from the browser scan paths. The pair-with-positional
+      form already covers sift's concrete use case (sift always has
+      the full session path in hand); ID resolution is a convenience
+      for humans typing the flag from memory. Land if demand surfaces.
+- [ ] **Deferred**: custom `<TAB>` completion for session IDs. Low
+      priority while ID resolution is deferred.
 
 **Acceptance:** user can browse branches in a Claude Code session that has
 them, replay a single tool call via MCP in an isolated backend, get a
