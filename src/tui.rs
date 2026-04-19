@@ -77,6 +77,13 @@ pub struct App {
     /// the overlay, independent of the main timeline's `list_state`.
     show_annotations: bool,
     annotations_list_state: ListState,
+    /// When true, render the conversation-branch (fork-root) list
+    /// overlay. Toggled by `b` in normal mode. Independent cursor.
+    /// Population is a pre-computed `fork_indices` so the overlay
+    /// stays constant-time to open.
+    show_forks: bool,
+    forks_list_state: ListState,
+    fork_indices: Vec<usize>,
     /// When true, suppress cost estimates in status bar, detail pane, and
     /// stats overlay. Token counts are still shown. Set via `--no-cost`.
     no_cost: bool,
@@ -131,6 +138,9 @@ impl App {
             show_stats: false,
             show_annotations: false,
             annotations_list_state: ListState::default(),
+            show_forks: false,
+            forks_list_state: ListState::default(),
+            fork_indices: Vec::new(),
             no_cost,
             session_totals: SessionTotals::default(),
             annotations: crate::annotations::Annotations::default(),
@@ -139,6 +149,7 @@ impl App {
         app.tool_stats = compute_tool_stats(&app.steps);
         app.heatmap = compute_heatmap(&app.steps);
         app.session_totals = compute_session_totals(&app.steps);
+        app.fork_indices = crate::timeline::fork_root_indices(&app.steps);
         app.sync_conversation_cursor();
         app
     }
@@ -156,6 +167,7 @@ impl App {
         self.conversation_indices = compute_conversation_indices(&self.steps);
         self.tool_stats = compute_tool_stats(&self.steps);
         self.session_totals = compute_session_totals(&self.steps);
+        self.fork_indices = crate::timeline::fork_root_indices(&self.steps);
         self.filter = None;
         self.search = None;
         self.search_matches.clear();
@@ -197,6 +209,64 @@ impl App {
         let cur = self.annotations_list_state.selected().unwrap_or(0);
         let next = (cur as isize + delta).clamp(0, (len - 1) as isize);
         self.annotations_list_state.select(Some(next as usize));
+    }
+
+    /// Open or close the conversation-branch (fork-root) list overlay.
+    /// Fork roots live outside the main linear timeline — edit/resume
+    /// in Claude Code creates them. The overlay is how users see the
+    /// branch structure without having to guess from the `║` gutter
+    /// marker in the main list.
+    fn toggle_forks_list(&mut self) {
+        if self.show_forks {
+            self.show_forks = false;
+            return;
+        }
+        self.show_forks = true;
+        self.forks_list_state
+            .select(if self.fork_indices.is_empty() {
+                None
+            } else {
+                Some(0)
+            });
+    }
+
+    /// Move the fork-overlay cursor by `delta`. Clamped; no-op when the
+    /// fork list is empty.
+    fn forks_cursor_move(&mut self, delta: isize) {
+        if self.fork_indices.is_empty() {
+            return;
+        }
+        let len = self.fork_indices.len();
+        let cur = self.forks_list_state.selected().unwrap_or(0);
+        let next = (cur as isize + delta).clamp(0, (len - 1) as isize);
+        self.forks_list_state.select(Some(next as usize));
+    }
+
+    /// Jump the main timeline cursor to the fork-root step selected in
+    /// the overlay. Same degradation story as the annotation overlay:
+    /// filter-hidden targets surface a status message rather than
+    /// silently moving somewhere else.
+    fn jump_to_selected_fork(&mut self) {
+        let Some(overlay_idx) = self.forks_list_state.selected() else {
+            self.show_forks = false;
+            return;
+        };
+        let Some(&orig_idx) = self.fork_indices.get(overlay_idx) else {
+            self.show_forks = false;
+            return;
+        };
+        self.show_forks = false;
+        match self.filtered_view.iter().position(|&i| i == orig_idx) {
+            Some(view_idx) => {
+                self.list_state.select(Some(view_idx));
+            }
+            None => {
+                self.status_msg = Some(format!(
+                    "fork root at step {} is hidden by the active filter",
+                    orig_idx + 1
+                ));
+            }
+        }
     }
 
     /// Jump the main timeline cursor to the annotation currently selected
@@ -1078,6 +1148,11 @@ fn run_loop(
                 let hits = app.search_matches.len();
                 title_parts.push(format!("[search: {q} · {hits}]"));
             }
+            // Fork-root count — shown only when >0 so linear sessions
+            // (the common case) don't gain a noise segment.
+            if !app.fork_indices.is_empty() {
+                title_parts.push(format!("[forks: {} · b]", app.fork_indices.len()));
+            }
             title_parts.push("[? help] ".to_string());
             let title = title_parts.join("   ");
 
@@ -1377,6 +1452,7 @@ fn run_loop(
                     )),
                     Line::from("  a               add / edit / clear annotation on current step (saved to ~/.agx/notes/)"),
                     Line::from("  A               list all annotations (Enter jumps to step, Esc closes)"),
+                    Line::from("  b               list all fork roots (Claude Code edit/resume branches)"),
                     Line::from("  y               copy current step to clipboard"),
                     Line::from("  h               toggle heatmap mode (tool-call density)"),
                     Line::from("  ? / F1          toggle this help"),
@@ -1619,6 +1695,57 @@ fn run_loop(
                 f.render_widget(Clear, area);
                 f.render_stateful_widget(list, area, &mut app.annotations_list_state);
             }
+
+            if app.show_forks {
+                let count = app.fork_indices.len();
+                let items: Vec<ListItem> = if count == 0 {
+                    vec![ListItem::new(Line::from(Span::styled(
+                        "  (no forks — this session is linear)",
+                        Style::default().fg(Color::DarkGray),
+                    )))]
+                } else {
+                    app.fork_indices
+                        .iter()
+                        .map(|&orig_idx| {
+                            let label = app
+                                .steps
+                                .get(orig_idx)
+                                .map(|s| truncate(&s.label, 60))
+                                .unwrap_or_else(|| "(missing step)".into());
+                            ListItem::new(Line::from(vec![
+                                Span::styled(
+                                    format!("step {:>4}  ", orig_idx + 1),
+                                    Style::default()
+                                        .fg(Color::DarkGray)
+                                        .add_modifier(Modifier::BOLD),
+                                ),
+                                Span::styled(label, Style::default().fg(Color::White)),
+                            ]))
+                        })
+                        .collect()
+                };
+                let title = format!(" forks ({count}) — Enter jumps · Esc closes ");
+                // 4 lines of chrome + 1 line per fork; 1 line when empty.
+                let body_lines = if count == 0 { 1 } else { count };
+                let height = u16::try_from(body_lines + 4)
+                    .unwrap_or(u16::MAX)
+                    .clamp(6, 20);
+                let area = centered_rect(78, height, f.area());
+                let list = List::new(items)
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(title)
+                            .border_style(Style::default().fg(Color::DarkGray)),
+                    )
+                    .highlight_style(
+                        Style::default()
+                            .add_modifier(Modifier::REVERSED)
+                            .add_modifier(Modifier::BOLD),
+                    );
+                f.render_widget(Clear, area);
+                f.render_stateful_widget(list, area, &mut app.forks_list_state);
+            }
         })?;
 
         let poll_timeout = if reload_fn.is_some() {
@@ -1674,6 +1801,17 @@ fn run_loop(
                     KeyCode::Up | KeyCode::Char('k') => app.annotations_cursor_move(-1),
                     KeyCode::Enter => app.jump_to_selected_annotation(),
                     _ => app.show_annotations = false,
+                }
+                continue;
+            }
+
+            // Fork-list overlay: same nav contract as annotations.
+            if app.show_forks {
+                match key.code {
+                    KeyCode::Down | KeyCode::Char('j') => app.forks_cursor_move(1),
+                    KeyCode::Up | KeyCode::Char('k') => app.forks_cursor_move(-1),
+                    KeyCode::Enter => app.jump_to_selected_fork(),
+                    _ => app.show_forks = false,
                 }
                 continue;
             }
@@ -1773,6 +1911,10 @@ fn run_loop(
                 KeyCode::Char('A') => {
                     app.clear_count();
                     app.toggle_annotations_list();
+                }
+                KeyCode::Char('b') => {
+                    app.clear_count();
+                    app.toggle_forks_list();
                 }
                 KeyCode::Char('n') => {
                     let n = app.take_count();
@@ -2599,6 +2741,58 @@ mod tests {
         // warn about because the session is simply empty, which the
         // rest of the TUI already handles).
         assert_eq!(app.list_state.selected(), None);
+    }
+
+    #[test]
+    fn toggle_forks_list_opens_and_closes() {
+        let mut app = App::new(sample_steps(), false);
+        // Synthetic: mark step 2 as a fork root so the overlay has content.
+        app.fork_indices = vec![2];
+        assert!(!app.show_forks);
+        app.toggle_forks_list();
+        assert!(app.show_forks);
+        assert_eq!(app.forks_list_state.selected(), Some(0));
+        app.toggle_forks_list();
+        assert!(!app.show_forks);
+    }
+
+    #[test]
+    fn toggle_forks_list_with_no_forks_opens_empty() {
+        let mut app = App::new(sample_steps(), false);
+        // fork_indices is empty by default for synthetic sample_steps.
+        app.toggle_forks_list();
+        assert!(app.show_forks);
+        assert_eq!(app.forks_list_state.selected(), None);
+    }
+
+    #[test]
+    fn jump_to_selected_fork_moves_main_cursor_and_closes_overlay() {
+        let mut app = App::new(sample_steps(), false);
+        app.fork_indices = vec![1, 3];
+        app.toggle_forks_list();
+        // Selected by default = 0 → fork at step 1.
+        app.jump_to_selected_fork();
+        assert!(!app.show_forks);
+        assert_eq!(app.list_state.selected(), Some(1));
+    }
+
+    #[test]
+    fn jump_to_filtered_fork_reports_hidden_via_status() {
+        let mut app = App::new(sample_steps(), false);
+        app.fork_indices = vec![3];
+        // Filter to rows whose label starts with "[user]" — hides step 3.
+        app.apply_filter("write");
+        app.toggle_forks_list();
+        app.jump_to_selected_fork();
+        assert!(!app.show_forks);
+        assert!(
+            app.status_msg
+                .as_deref()
+                .unwrap_or("")
+                .contains("hidden by the active filter"),
+            "expected filter-hidden status, got {:?}",
+            app.status_msg
+        );
     }
 
     #[test]

@@ -816,13 +816,32 @@ lean into MCP as the tool-call metadata layer matures.
 
 ### Subplans
 
-**5.1 — Branch / fork visualization**
-- [ ] Walk `parentUuid` in Claude Code entries to build a conversation
-      tree in `timeline::build_tree()`; most sessions are linear but
-      edit/resume creates branches
-- [ ] TUI overlay: ASCII tree of branches, `b` lists, Enter switches view
-- [ ] Codex and Gemini: implement only if their formats carry branch
-      pointers; otherwise this is Claude-Code-only and documented as such
+**5.1 — Branch / fork visualization** ✅ (shipped 2026-04-19)
+- [x] `timeline::build` walks Claude Code `parentUuid` links and marks
+      each originating-step's `Step.is_fork_root = true` when the parent
+      has ≥2 children (or when the session has multiple root entries,
+      each root counts as a fork). Detection is O(N) via a
+      `HashMap<Option<&str>, Vec<&str>>` children-by-parent map.
+- [x] `Step` gained `is_fork_root: bool` (serde-defaulted, so every
+      other format parser — Codex / Gemini / Generic / OTel / LangChain /
+      Vercel — leaves it `false` without code changes). Feature is
+      Claude-Code-only by construction, not by an explicit feature gate.
+- [x] TUI: `b` keybinding opens a forks list overlay mirroring the
+      annotations `A` overlay. Columns: step number + label preview.
+      `j`/`k`/arrows navigate; Enter jumps to the fork root in the
+      main timeline; Esc (or any other key) closes. Filter-hidden
+      target → status-bar warning, not a silent move.
+- [x] TUI: status-bar title shows `[forks: N · b]` when any forks
+      detected. Linear sessions (the common case) get no extra
+      chrome.
+- [x] Help overlay updated with the `b` keybind.
+- [x] 9 new tests: 5 for fork detection in `timeline.rs` (linear
+      session, siblings of one parent, multiple root entries, single
+      root, fork marker only on first emitted step per entry), 4 for
+      the TUI overlay (toggle open/close, empty-state, jump-moves-
+      cursor-closes-overlay, filter-hidden reports via status).
+- [x] Codex / Gemini / other format parsers: no-op. Documented as
+      Claude-Code-only in the per-field Step doc comment.
 
 **5.2 — MCP-aware tool call rendering**
 - [ ] When a tool call carries MCP metadata (server name, resource URI,

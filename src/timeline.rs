@@ -27,6 +27,14 @@ pub struct Step {
     pub cache_read: Option<u64>,
     /// Tokens written to the prompt cache in this response (Anthropic).
     pub cache_create: Option<u64>,
+    /// True when this step is the root of a conversation branch — i.e.
+    /// its originating entry shares a `parentUuid` with at least one
+    /// other entry in the same session. Only set by the Claude Code
+    /// parser today (the only format where `parentUuid` is a
+    /// first-class field); other parsers leave this `false`. Powers
+    /// the TUI fork list overlay and status-bar fork count (Phase 5.1).
+    #[serde(default)]
+    pub is_fork_root: bool,
 }
 
 impl Step {
@@ -265,13 +273,71 @@ struct ToolMeta {
     input_pretty: String,
 }
 
+/// Entries that share a `parentUuid` (including the implicit `None` root)
+/// form a fork. Returns the set of uuids that are fork roots — the
+/// entries whose originating step should be flagged `is_fork_root`.
+///
+/// Rules:
+/// - A parent with ≥2 children: every child is a fork root.
+/// - >1 root-level entries (parent_uuid == None): every root is a fork root.
+/// - A parent with exactly 1 child: normal linear continuation, not a fork.
+///
+/// Kept Claude-Code-private because only `session::Entry` carries
+/// `parentUuid`; other formats don't have the concept.
+fn collect_fork_root_uuids(entries: &[Entry]) -> std::collections::HashSet<&str> {
+    use std::collections::HashMap;
+    let mut children_by_parent: HashMap<Option<&str>, Vec<&str>> = HashMap::new();
+    for entry in entries {
+        let (uuid, parent) = match entry {
+            Entry::User(u) => (u.uuid.as_str(), u.parent_uuid.as_deref()),
+            Entry::Assistant(a) => (a.uuid.as_str(), a.parent_uuid.as_deref()),
+            Entry::Other => continue,
+        };
+        children_by_parent.entry(parent).or_default().push(uuid);
+    }
+    children_by_parent
+        .into_iter()
+        .filter(|(_, children)| children.len() > 1)
+        .flat_map(|(_, children)| children.into_iter())
+        .collect()
+}
+
+/// Count of fork-root steps in a timeline. Useful for status-bar hints
+/// ("[forks: N]") without re-walking the steps every frame.
+#[must_use]
+pub fn fork_root_count(steps: &[Step]) -> usize {
+    steps.iter().filter(|s| s.is_fork_root).count()
+}
+
+/// Indices (into `steps`) of every fork-root step, in the order they
+/// appear. The TUI's fork-list overlay walks this to let users
+/// jump-to-fork.
+#[must_use]
+pub fn fork_root_indices(steps: &[Step]) -> Vec<usize> {
+    steps
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| s.is_fork_root)
+        .map(|(i, _)| i)
+        .collect()
+}
+
 pub fn build(entries: &[Entry]) -> Vec<Step> {
     let tool_meta = collect_tool_meta(entries);
+    // Count children per parent_uuid to detect branch roots. An entry is
+    // a fork root when it shares its `parentUuid` with ≥1 other entry —
+    // i.e. the conversation forked at that parent. Also count
+    // root-level entries (parent_uuid = None): if there are >1, the
+    // file contains multiple independent conversation threads, each
+    // root is a fork root. Built in one pass so `build()` stays O(N).
+    let fork_uuids = collect_fork_root_uuids(entries);
     let mut steps = Vec::new();
     for entry in entries {
         match entry {
             Entry::User(u) => {
                 let ts = u.timestamp.as_deref().and_then(parse_iso_ms);
+                let is_fork = fork_uuids.contains(u.uuid.as_str());
+                let entry_first_idx = steps.len();
                 match &u.message.content {
                     UserContent::Text(text) => {
                         let mut step = user_text_step(text);
@@ -309,10 +375,14 @@ pub fn build(entries: &[Entry]) -> Vec<Step> {
                         }
                     }
                 }
+                if is_fork && let Some(first) = steps.get_mut(entry_first_idx) {
+                    first.is_fork_root = true;
+                }
             }
             Entry::Assistant(a) => {
                 let ts = a.timestamp.as_deref().and_then(parse_iso_ms);
                 let first_idx = steps.len();
+                let is_fork = fork_uuids.contains(a.uuid.as_str());
                 for item in &a.message.content {
                     match item {
                         AssistantContentItem::Text { text } => {
@@ -328,6 +398,9 @@ pub fn build(entries: &[Entry]) -> Vec<Step> {
                         }
                         AssistantContentItem::Other => {}
                     }
+                }
+                if is_fork && let Some(first) = steps.get_mut(first_idx) {
+                    first.is_fork_root = true;
                 }
                 // If this assistant message produced at least one step, attach
                 // model + usage to the first of them. Format parsers across
@@ -665,6 +738,123 @@ mod tests {
         let mut steps: Vec<Step> = Vec::new();
         // Should not panic.
         attach_usage_to_first(&mut steps, 0, Some("m"), &Usage::default());
+    }
+
+    // -------- Phase 5.1 fork detection --------
+
+    fn user_entry(uuid: &str, parent: Option<&str>, text: &str) -> Entry {
+        Entry::User(UserEntry {
+            uuid: uuid.into(),
+            parent_uuid: parent.map(str::to_string),
+            timestamp: None,
+            message: UserMessage {
+                role: "user".into(),
+                content: UserContent::Text(text.into()),
+            },
+        })
+    }
+
+    fn asst_entry(uuid: &str, parent: Option<&str>, text: &str) -> Entry {
+        Entry::Assistant(AssistantEntry {
+            uuid: uuid.into(),
+            parent_uuid: parent.map(str::to_string),
+            timestamp: None,
+            message: AssistantMessage {
+                role: "assistant".into(),
+                model: None,
+                usage: None,
+                content: vec![AssistantContentItem::Text { text: text.into() }],
+            },
+        })
+    }
+
+    #[test]
+    fn linear_session_has_no_fork_roots() {
+        let entries = vec![
+            user_entry("u1", None, "hi"),
+            asst_entry("a1", Some("u1"), "hello"),
+            user_entry("u2", Some("a1"), "and"),
+            asst_entry("a2", Some("u2"), "ok"),
+        ];
+        let steps = build(&entries);
+        assert_eq!(fork_root_count(&steps), 0);
+        assert!(fork_root_indices(&steps).is_empty());
+    }
+
+    #[test]
+    fn two_siblings_of_same_parent_are_fork_roots() {
+        // u1 has two children: a1 and a2 — both are fork roots. The
+        // assistant's first emitted step carries the marker.
+        let entries = vec![
+            user_entry("u1", None, "prompt"),
+            asst_entry("a1", Some("u1"), "first reply"),
+            asst_entry("a2", Some("u1"), "second reply"),
+        ];
+        let steps = build(&entries);
+        assert_eq!(fork_root_count(&steps), 2);
+        assert!(steps[1].is_fork_root);
+        assert!(steps[2].is_fork_root);
+        assert!(!steps[0].is_fork_root);
+    }
+
+    #[test]
+    fn multiple_root_entries_are_all_fork_roots() {
+        // Two independent conversation roots in one file — every root
+        // is a fork root because parent_uuid=None shows up >1 time.
+        let entries = vec![
+            user_entry("u1", None, "thread 1"),
+            user_entry("u2", None, "thread 2"),
+        ];
+        let steps = build(&entries);
+        assert_eq!(fork_root_count(&steps), 2);
+        assert_eq!(fork_root_indices(&steps), vec![0, 1]);
+    }
+
+    #[test]
+    fn single_root_entry_is_not_a_fork() {
+        let entries = vec![user_entry("u1", None, "only thread")];
+        let steps = build(&entries);
+        assert_eq!(fork_root_count(&steps), 0);
+    }
+
+    #[test]
+    fn fork_root_marker_only_on_first_emitted_step() {
+        // A forked assistant message with two content items emits two
+        // steps — the marker should land on the first one only.
+        use crate::session::{AssistantEntry, AssistantMessage};
+        let entries = vec![
+            user_entry("u1", None, "prompt"),
+            Entry::Assistant(AssistantEntry {
+                uuid: "a1".into(),
+                parent_uuid: Some("u1".into()),
+                timestamp: None,
+                message: AssistantMessage {
+                    role: "assistant".into(),
+                    model: None,
+                    usage: None,
+                    content: vec![
+                        AssistantContentItem::Text {
+                            text: "thinking".into(),
+                        },
+                        AssistantContentItem::ToolUse {
+                            id: "t1".into(),
+                            name: "Read".into(),
+                            input: serde_json::json!({}),
+                        },
+                    ],
+                },
+            }),
+            asst_entry("a2", Some("u1"), "alt reply"),
+        ];
+        let steps = build(&entries);
+        // a1 emits 2 steps (text + tool_use), a2 emits 1. Forks are a1 and a2.
+        assert_eq!(steps.len(), 4);
+        assert!(steps[1].is_fork_root, "first step from a1 should be marked");
+        assert!(
+            !steps[2].is_fork_root,
+            "subsequent step from same entry should not be marked"
+        );
+        assert!(steps[3].is_fork_root);
     }
 
     #[test]
