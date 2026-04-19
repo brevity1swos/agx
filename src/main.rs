@@ -3,7 +3,7 @@
 // without duplicating code. This binary is a thin shell around the
 // library.
 use agx::{
-    annotations, browser, corpus, debug_unknowns, diff_tui, export, format, loader, slice,
+    annotations, browser, corpus, debug_unknowns, diff_tui, export, format, loader, pii, slice,
     timeline::{Step, compute_session_totals, compute_tool_stats, count_from_steps},
     tui,
 };
@@ -59,6 +59,15 @@ struct Cli {
     /// and print a report to stderr. Useful for diagnosing format drift.
     #[arg(long)]
     debug_unknowns: bool,
+
+    /// Heuristic scan for PII / credentials in tool outputs and step
+    /// detail. Reports matches by category (email, api-key shape,
+    /// JWT, IPv4, SSH private-key header) with step index. Does NOT
+    /// mutate — pair with `--redact` when the intent is to scrub.
+    /// Output: human-readable text by default, JSON when combined
+    /// with `--export json`. Phase 6.4 dataset-prep workflow.
+    #[arg(long)]
+    scan_pii: bool,
 
     /// Suppress cost estimates in --summary, stats overlay, and TUI status
     /// bar. Token counts are still shown. Use when working with unpriced
@@ -220,6 +229,68 @@ struct CorpusArgs {
 
 // `load_session` itself lives in src/loader.rs so both the single-session
 // flow below and the corpus subcommand dispatch through the same entry.
+
+/// Print a PII scan report to stdout. Groups matches by category and
+/// shows the first match from each category with its step index. The
+/// intent is "fast glance — do I have anything to redact before
+/// publishing this session?" rather than a full secrets-management
+/// tool. Exit code 0 whether or not matches are found (the dataset-
+/// prep workflow is iterative — scan, redact, re-scan).
+fn print_pii_scan(steps: &[Step]) {
+    use std::collections::BTreeMap;
+    let matches = pii::scan_steps(steps);
+    if matches.is_empty() {
+        println!("agx --scan-pii: no matches");
+        return;
+    }
+    // Group by category for a tidy summary. BTreeMap keeps the
+    // output order stable across runs.
+    let mut by_cat: BTreeMap<&str, Vec<&pii::Match>> = BTreeMap::new();
+    for m in &matches {
+        by_cat.entry(m.category.label()).or_default().push(m);
+    }
+    println!(
+        "agx --scan-pii: {} match(es) across {} categor(ies)",
+        matches.len(),
+        by_cat.len()
+    );
+    for (cat, hits) in &by_cat {
+        let first = hits.first().expect("non-empty by construction");
+        // Show up to 3 step indices so users can jump-to them via
+        // `--jump-to`. Truncated when > 3.
+        let step_preview: Vec<String> = hits
+            .iter()
+            .take(3)
+            .map(|h| format!("step {}", h.step_index + 1))
+            .collect();
+        let more = if hits.len() > 3 {
+            format!(" (+{} more)", hits.len() - 3)
+        } else {
+            String::new()
+        };
+        println!(
+            "  {cat:<24} {:>3} match(es)  [{}]{more}  eg: {}",
+            hits.len(),
+            step_preview.join(", "),
+            truncate_for_display(&first.snippet, 40),
+        );
+    }
+    println!();
+    println!(
+        "agx: to scrub these, pipe back through `--redact <NEEDLE>` or `--export trajectory-openai --redact …`"
+    );
+}
+
+/// Truncate a string for terminal display, keeping the head and
+/// appending `…` when trimmed. Used by the PII scan output only.
+fn truncate_for_display(s: &str, n: usize) -> String {
+    let head: String = s.chars().take(n).collect();
+    if s.chars().count() > n {
+        format!("{head}…")
+    } else {
+        head
+    }
+}
 
 fn print_diff(path_a: &Path, steps_a: &[Step], path_b: &Path, steps_b: &[Step]) {
     let fmt_a = format::detect(path_a).map_or_else(|_| "?".into(), |f| f.to_string());
@@ -397,6 +468,14 @@ fn main() -> Result<()> {
     } else {
         steps
     };
+
+    if cli.scan_pii {
+        // PII scan is a non-interactive mode that takes over stdout;
+        // mutually compatible with slice flags (scan operates on the
+        // already-sliced steps) but not with TUI or export flows.
+        print_pii_scan(&steps);
+        return Ok(());
+    }
 
     if let Some(diff_path) = &cli.diff {
         let steps_b = load_session(diff_path)?;

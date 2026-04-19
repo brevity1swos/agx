@@ -128,6 +128,11 @@ agx --export trajectory-openai <session> > session.openai.jsonl
 # applies to every --export format.
 agx --export trajectory-openai --redact 'sk-abc123' --redact 'bearer xyz' <session>
 
+# Heuristic scan for credentials / PII before publishing — catches AWS/Stripe/GitHub/
+# OpenAI/Anthropic keys, JWTs, SSH private-key PEM headers, emails, IPv4 addresses.
+# Read-only: reports matches + step indices, doesn't mutate. Pair with --redact.
+agx --scan-pii <session>
+
 # Diagnose format drift — prints every entry type or field the parser
 # didn't recognize, to stderr. Useful when a new CLI version lands.
 agx --debug-unknowns <session>

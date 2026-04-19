@@ -59,6 +59,7 @@ src/
 ├── annotations.rs      # Phase 4.3 per-step annotations; sidecar JSON under ~/.agx/notes/, atomic rename, fault-tolerant load
 ├── semantic.rs         # Phase 4.4 semantic search (`//query`); feature-gated `embedding-search`, stub when off
 ├── notify.rs           # Phase 5.3 desktop notifications for `--live` mode; feature-gated `notifications`, no-op when off
+├── pii.rs              # Phase 6.4 heuristic PII / credential scanner for --scan-pii; prefix-based, zero new deps
 ├── timeline.rs         # Shared Step / StepKind / Usage / SessionTotals + step helpers + compute_* functions
 ├── pricing.rs          # Per-model USD rate table + Step::cost_usd delegation target
 ├── export.rs           # Markdown / HTML / JSON transcript writers (String-returning, no I/O)

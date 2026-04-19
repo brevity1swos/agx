@@ -1037,9 +1037,37 @@ CLI agent." Prior roadmap had nothing for it.
       custom pipeline
 - [ ] Include anonymization checklist for dataset release
 
-**6.4 — Privacy & safety for dataset use**
-- [ ] `--scan-pii`: heuristic scan for emails, phone numbers, API-key
-      shapes, SSH keys in tool outputs; reports counts, doesn't mutate
+**6.4 — Privacy & safety for dataset use** ✅ (scanner shipped 2026-04-19)
+- [x] `agx --scan-pii <session>` — heuristic credential / PII scanner.
+      Covers AWS access keys (AKIA/ASIA prefix), Stripe secret +
+      publishable keys (sk_live / sk_test / pk_*), GitHub tokens (ghp_
+      / gho_ / ghu_ / ghs_ / ghr_), OpenAI keys (sk- excluding
+      sk-ant-), Anthropic keys (sk-ant-), SSH private-key PEM
+      headers, JWT tokens (eyJ + 3 base64url groups), emails (local@
+      domain.tld with a real tld), and IPv4 addresses (with octet
+      range validation). Read-only — pair with `--redact` to scrub.
+- [x] Output: text by default (per-category count + first match
+      snippet + up to 3 step indices + "how to redact" hint).
+      Exit 0 whether or not matches — the dataset-prep workflow is
+      iterative (scan → redact → re-scan).
+- [x] `src/pii.rs` is a new module with `scan(text) -> Vec<Match>` /
+      `scan_steps(steps) -> Vec<Match>` public API. Zero new deps:
+      all patterns are prefix-based byte scans, no `regex` crate.
+      Keeps default binary lean (<5MB) and avoids a ~500KB runtime
+      dep most users don't need.
+- [x] 12 tests cover: each credential family, email local+domain
+      rules, IPv4 octet validation + rejection of >255 / trailing
+      digits, SSH header exact-match, JWT 3-group validation,
+      per-step indexing, empty-input guard, openai/anthropic
+      disambiguation.
+- [ ] **Deferred**: `agx corpus --scan-pii` aggregate across the
+      directory. Natural extension — land when a concrete caller
+      needs it. Per-session scan already covers the dataset-prep
+      workflow via `find dir -name '*.jsonl' | xargs -I {} agx
+      --scan-pii {}`.
+- [ ] **Deferred**: phone-number patterns. International coverage is
+      fiddly enough to warrant the `phonenumber` crate, which is
+      heavy. Add if someone needs it.
 - [ ] `--anonymize-uuids`: rewrite UUIDs, absolute paths, and user/project
       names in exports to stable pseudonyms
 - [ ] Both are **opt-in**, documented as "best effort, not a substitute

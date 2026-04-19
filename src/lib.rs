@@ -47,6 +47,7 @@ pub mod loader;
 pub mod notify;
 pub mod otel_json;
 pub mod otel_proto;
+pub mod pii;
 pub mod pricing;
 pub mod semantic;
 pub mod session;
