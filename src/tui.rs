@@ -583,6 +583,17 @@ impl App {
             self.clear_search();
             return;
         }
+        // Leading `//` → semantic search (Phase 4.4). Everything after the
+        // prefix is the query sent to the embedder. The `//` marker was
+        // picked over `/` because the regular search prompt is opened
+        // with `/`, and `//foo` is an unambiguous, easy-to-type way to
+        // say "I mean semantic, not substring." When the feature is off,
+        // `semantic::rank` returns `None` and we surface the rebuild
+        // hint via status_msg without touching current search state.
+        if let Some(sem_query) = trimmed.strip_prefix("//") {
+            self.apply_semantic_search(sem_query);
+            return;
+        }
         self.search = Some(trimmed.to_string());
         self.recompute_search_matches();
         if self.search_matches.is_empty() {
@@ -591,6 +602,57 @@ impl App {
             return;
         }
         // Jump to first match at-or-after the current selection, wrapping if needed.
+        let current = self.list_state.selected().unwrap_or(0);
+        let target = self
+            .search_matches
+            .iter()
+            .copied()
+            .find(|&idx| idx >= current)
+            .or_else(|| self.search_matches.first().copied());
+        if let Some(idx) = target {
+            self.list_state.select(Some(idx));
+        }
+    }
+
+    /// Dispatch a `//query` semantic search. Converts the embedder's
+    /// original-index results into filtered_view positions so the
+    /// existing highlight + jump paths work without modification.
+    /// When the feature is off, surfaces the rebuild hint and leaves
+    /// any active string-match search state untouched.
+    fn apply_semantic_search(&mut self, query: &str) {
+        let query = query.trim();
+        if query.is_empty() {
+            self.status_msg = Some("empty semantic query".into());
+            return;
+        }
+        let Some(orig_matches) = crate::semantic::rank(query, &self.steps) else {
+            self.status_msg = Some(crate::semantic::FEATURE_DISABLED_MESSAGE.into());
+            return;
+        };
+        if orig_matches.is_empty() {
+            self.status_msg = Some(format!("no semantic matches for '{query}'"));
+            self.search = None;
+            self.search_matches.clear();
+            return;
+        }
+        // Map original step indices into the current filtered view.
+        // Steps not in filtered_view are dropped (they can't be
+        // highlighted in the list anyway).
+        let mut view_matches: Vec<usize> = orig_matches
+            .into_iter()
+            .filter_map(|orig| self.filtered_view.iter().position(|&i| i == orig))
+            .collect();
+        view_matches.sort_unstable();
+        view_matches.dedup();
+        if view_matches.is_empty() {
+            self.status_msg = Some(format!(
+                "semantic matches for '{query}' are all hidden by the active filter"
+            ));
+            return;
+        }
+        self.search = Some(format!("//{query}"));
+        self.search_matches = view_matches;
+        // Jump to first match at-or-after the current selection.
         let current = self.list_state.selected().unwrap_or(0);
         let target = self
             .search_matches
@@ -613,6 +675,16 @@ impl App {
         let Some(query) = self.search.as_deref() else {
             return;
         };
+        // Semantic searches (stored with the `//` prefix in
+        // `self.search`) aren't re-embeddable on every filter change
+        // without blocking the UI. Drop them when filters change — the
+        // user can re-run `//query` to refresh. Cheaper than a cached
+        // embedding index and keeps the hot path reserved for
+        // substring search.
+        if query.starts_with("//") {
+            self.search = None;
+            return;
+        }
         let needle = query.to_lowercase();
         for (view_idx, &orig) in self.filtered_view.iter().enumerate() {
             let Some(step) = self.steps.get(orig) else {
@@ -1199,6 +1271,7 @@ fn run_loop(
                         Style::default().add_modifier(Modifier::BOLD),
                     )),
                     Line::from("  /               open search prompt (highlights matches)"),
+                    Line::from("  //query         semantic search (opt-in; --features embedding-search)"),
                     Line::from("  n               next match"),
                     Line::from("  N               prev match"),
                     Line::from("  (empty enter)   clear current search"),
@@ -2365,6 +2438,40 @@ mod tests {
         // Step 3 in the underlying steps is 0-indexed → filtered_view
         // is identity by default, so selected() should be 3.
         assert_eq!(app.list_state.selected(), Some(3));
+    }
+
+    #[cfg(not(feature = "embedding-search"))]
+    #[test]
+    fn semantic_prefix_without_feature_shows_rebuild_hint() {
+        let mut app = App::new(sample_steps(), false);
+        app.apply_search("//fibonacci");
+        // Search state untouched; status explains how to enable.
+        assert!(app.search.is_none());
+        let msg = app.status_msg.as_deref().unwrap_or("");
+        assert!(
+            msg.contains("--features embedding-search"),
+            "status msg should mention the feature flag, got: {msg}"
+        );
+    }
+
+    #[cfg(not(feature = "embedding-search"))]
+    #[test]
+    fn semantic_prefix_does_not_clear_existing_string_search() {
+        let mut app = App::new(sample_steps(), false);
+        app.apply_search("fib"); // valid string-match search
+        assert!(!app.search_matches.is_empty());
+        app.apply_search("//anything");
+        // Existing search preserved (feature-off path only writes status).
+        assert_eq!(app.search.as_deref(), Some("fib"));
+        assert!(!app.search_matches.is_empty());
+    }
+
+    #[test]
+    fn empty_semantic_query_reports_error() {
+        let mut app = App::new(sample_steps(), false);
+        app.apply_search("//   ");
+        let msg = app.status_msg.as_deref().unwrap_or("");
+        assert!(msg.contains("empty semantic"), "got: {msg}");
     }
 
     #[test]

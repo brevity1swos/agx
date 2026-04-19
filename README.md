@@ -210,6 +210,7 @@ Everything below works end-to-end on real sessions across all five supported for
 - **Latency annotations**: per-step duration computed from timestamps, shown in detail pane
 - **Filter** (`f`): case-insensitive substring match, hides non-matching rows
 - **Search** (`/`): highlights matches with distinct bg, `n`/`N` to navigate hits
+- **Semantic search** (`//query`, opt-in): ranks steps by meaning, not substring. Build with `cargo install agx --features embedding-search` (adds fastembed + ONNX Runtime; first use downloads a ~90MB MiniLM model to `~/.cache/fastembed/`). Without the feature, `//query` prints a rebuild hint and leaves existing search state intact.
 - **Bookmarks** (`m<char>` / `'<char>`): survive filter cycles, report hidden-by-filter
 - **Jump to step** (`:N`): command-mode numeric jump
 - **Time-travel scrubbing bar**: bottom progress gauge with position indicator

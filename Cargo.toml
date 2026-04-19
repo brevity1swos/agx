@@ -14,6 +14,14 @@ license = "MIT OR Apache-2.0"
 #   cargo build --release --features otel-proto
 default = []
 otel-proto = ["dep:prost"]
+# Semantic search over session steps. Off by default because `fastembed`
+# pulls in `ort` (ONNX Runtime) + `tokenizers` + `hf-hub`, adding tens of
+# MB to the binary and a one-time model download on first use. Without
+# this feature, the `//query` prefix in the TUI search prompt surfaces a
+# "rebuild with --features embedding-search" message. Enable with:
+#   cargo install agx --features embedding-search
+#   cargo build --release --features embedding-search
+embedding-search = ["dep:fastembed"]
 
 [dependencies]
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
@@ -25,6 +33,9 @@ clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 arboard = "3"
 prost = { version = "0.13", optional = true }
+# Opt-in semantic search (see `embedding-search` feature above). Pure-Rust
+# ONNX runtime via `ort`; default MiniLM-L6-v2 model is ~90MB on first use.
+fastembed = { version = "5", optional = true }
 # Parallel parsing in `agx corpus <dir>`. Pulls in `rayon-core` + `crossbeam`
 # helpers (both pure-Rust, no OS-specific transitive deps). Small enough
 # to earn its place given the target use case of scanning thousands of

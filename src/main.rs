@@ -15,6 +15,7 @@ mod loader;
 mod otel_json;
 mod otel_proto;
 mod pricing;
+mod semantic;
 mod session;
 mod slice;
 mod timeline;

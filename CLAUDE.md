@@ -7,10 +7,13 @@ Step-through debugger for your agent. Rust TUI app using ratatui + crossterm + s
 ```bash
 cargo build --release                                # Build (release, default features)
 cargo build --release --features otel-proto          # Release build with binary OTLP support
+cargo build --release --features embedding-search    # Release build with semantic search (fastembed / ONNX)
 cargo test                                           # Run all tests (feature-off path)
 cargo test --features otel-proto                     # Run all tests (feature-on path — prost included)
+cargo test --features embedding-search               # Run all tests (feature-on path — fastembed included)
 cargo clippy --all-targets -- -D warnings            # Lint, default features
 cargo clippy --all-targets --features otel-proto -- -D warnings  # Lint with feature on
+cargo clippy --all-targets --features embedding-search -- -D warnings  # Lint with semantic feature on
 cargo fmt --check                                    # Format check
 cargo fmt                                            # Format apply
 cargo audit                                          # Supply chain audit
@@ -47,6 +50,7 @@ src/
 ├── diff_tui.rs         # `agx foo --diff bar --diff-tui` two-pane ratatui rendering of the alignment
 ├── slice.rs            # Phase 4.2 pure slicing: duration / range parsers + slice_steps applied in main before dispatch
 ├── annotations.rs      # Phase 4.3 per-step annotations; sidecar JSON under ~/.agx/notes/, atomic rename, fault-tolerant load
+├── semantic.rs         # Phase 4.4 semantic search (`//query`); feature-gated `embedding-search`, stub when off
 ├── timeline.rs         # Shared Step / StepKind / Usage / SessionTotals + step helpers + compute_* functions
 ├── pricing.rs          # Per-model USD rate table + Step::cost_usd delegation target
 ├── export.rs           # Markdown / HTML / JSON transcript writers (String-returning, no I/O)
@@ -69,6 +73,7 @@ src/
   - **Vercel AI SDK**: `steps[]` array when present is walked in order; `toolCalls[]` on a step emits `tool_use` steps (camelCase fields: `toolCallId` / `toolName` / `args`-as-object) and `toolResults[]` emits paired `tool_result` steps. Usage attaches per-step, not from the root aggregate (root is a sum-of-steps — falling back would double-count). All-zero usage on tool-result-only steps is treated as "no LLM call" so the step doesn't sprout misleading zero-token rows.
   - **OTel GenAI**: a span with `gen_ai.operation.name = "execute_tool"` emits `tool_use` + `tool_result` together from `gen_ai.tool.name` / `.call.id` / `.call.arguments` / `.call.result`. LLM spans (`chat`, `text_completion`, `generate_content`) walk `gen_ai.prompt.{N}.role/.content` and `gen_ai.completion.{N}.role/.content` in numeric order. Non-GenAI spans (generic HTTP/DB) are ignored. Spans across ResourceSpans/ScopeSpans boundaries are sorted by `startTimeUnixNano`. The binary OTLP parser (`otel_proto.rs`) decodes the same logical structure with `prost` and reuses `otel_json::append_span` for the actual span → Step conversion.
 - **Binary OTLP feature gate** (`otel_proto.rs`): the `otel-proto` Cargo feature is off by default. When on, the module compiles a minimal hand-written prost schema (`TracesData` / `ResourceSpans` / `ScopeSpans` / `Span` / `KeyValue` / `AnyValue`) covering only the fields agx reads — intentionally lighter than pulling the full `opentelemetry-proto` crate. When off, `load()` returns a helpful error directing the user to rebuild with the flag. Format detection always routes non-UTF-8 files to `Format::OtelProto` so the failure mode surfaces at dispatch, not deep in serde.
+- **Semantic search feature gate** (`semantic.rs`): the `embedding-search` Cargo feature is off by default. The module exposes one function — `semantic::rank(query, steps) → Option<Vec<usize>>`. Feature off: `rank` returns `None` immediately (no deps compiled), TUI reads `FEATURE_DISABLED_MESSAGE` into `status_msg` with a rebuild hint. Feature on: lazy-initialized `TextEmbedding` in a process-wide `OnceLock<Mutex<_>>`, embeds the query + each step's `label+detail`, cosine-ranks, drops matches below threshold 0.25, caps at `MAX_RESULTS=30`. TUI dispatch lives in `tui.rs::apply_search`: a leading `//` in the search prompt routes to `apply_semantic_search` which maps the original step indices into current filtered-view positions. On filter change, semantic matches are discarded rather than re-embedded (expensive — user re-runs `//query` to refresh). `fastembed` pulls `ort` + `tokenizers` + `hf-hub`; first call triggers a ~90MB MiniLM-L6-v2 download to `~/.cache/fastembed/` (fastembed's default path), no further network. Default binary budget is <5MB; measured 2.6MB on macOS-arm64 at time of shipping Phase 4.4.
 - **Parser graceful unknown handling** (Claude Code): `#[serde(other)]` on `Entry`, `UserContentItem`, `AssistantContentItem` variants so unknown entry types or schema drift degrade to `Other` instead of failing the parse. Codex, Gemini, Generic, and OTel parsers use `serde_json::Value` internally for the payload so unknown fields are ignored without panicking.
 - **Format-drift diagnostics** (`src/debug_unknowns.rs`): `--debug-unknowns` adds one `scan_<format>` per format. Each scanner walks the raw JSON/JSONL (second pass, zero runtime cost when the flag is off) and reports unknown top-level types, payload types, content-item types, or operation names — grouped with the first three line/span-index samples. Used in issue templates for format-drift reports.
 - **Pricing + cost** (`src/pricing.rs`): a hand-curated `ModelPricing` table keyed by model name, case-insensitive exact match (no fuzzy family fallback — avoids silent wrong numbers on new variants). Returns `None` for unknown models or zero-token inputs rather than fabricating cost. `Step::cost_usd()` is a thin delegate. Every row has a `last_verified` string; a test asserts it's non-empty.

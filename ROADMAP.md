@@ -706,13 +706,32 @@ diff, deeper search, and notes that survive session edits.
       are loaded eagerly during the parallel scan and surfaced in
       `--jsonl` output for downstream tooling.
 
-**4.4 — Semantic search (opt-in feature flag)**
-- [ ] `--features embedding-search` compile flag, default off
-- [ ] `//query` prefix in search triggers embedding-based lookup
-- [ ] Use `fastembed-rs` (pure-Rust ONNX); model downloaded once to
-      `~/.cache/agx/` on first use, no network calls afterward, no API
-      calls ever
-- [ ] Without the feature: `//query` prints "semantic search not compiled in"
+**4.4 — Semantic search (opt-in feature flag)** ✅ (shipped 2026-04-19)
+- [x] `--features embedding-search` compile flag, default off. Cargo.toml
+      adds an optional `fastembed = "5"` dep behind the feature.
+- [x] `//query` prefix in the TUI search prompt triggers semantic lookup.
+      The rest of the string is embedded; each step's `label + detail`
+      is embedded; cosine similarity ranks matches; threshold 0.25
+      drops noise; `MAX_RESULTS = 30` caps list length. Results flow
+      through the existing `search_matches` vec so highlighting, jump-
+      to-next (`n`), and jump-to-prev (`N`) work unchanged.
+- [x] Uses `fastembed-rs` with `AllMiniLML6V2` as the default model.
+      Lazy-initialized via `OnceLock<Mutex<TextEmbedding>>` so repeat
+      queries don't re-load the model. First call downloads ~90MB to
+      `~/.cache/fastembed/` (fastembed's default path); no further
+      network activity ever.
+- [x] Without the feature: the `//` dispatch in `tui::apply_search`
+      surfaces `semantic::FEATURE_DISABLED_MESSAGE` via the status
+      bar. The message tells the user both the `cargo install` and
+      `cargo build` paths to enable the feature. No change to the
+      default binary — verified at 2.6MB after Phase 4.4 shipped
+      (budget: <5MB).
+- [x] On filter change after a semantic search, the search is cleared
+      rather than re-embedded. Re-running `//query` is cheap-enough
+      and avoids a surprise multi-second block when filters toggle.
+- [x] 6 new unit tests (3 in `semantic.rs` + 3 in `tui.rs`) cover
+      feature-disabled path, message content, empty-query error,
+      and the "don't clobber existing string-search" invariant.
 
 **Acceptance:** user can diff two sessions side-by-side in TUI with
 inline-highlighted input drift, add notes to specific steps that survive
