@@ -1029,13 +1029,23 @@ CLI agent." Prior roadmap had nothing for it.
       `TrajectoryStats`, branched/annotated/errored rate
       calculation, steps distribution correctness.
 
-**6.3 — Eval-framework adapter helpers**
-- [ ] Document the exact JSON schema used by Phase 1.4's `--export json`
-      and guarantee its stability (feeds Phase 7 library mode)
-- [ ] Ship small adapter examples (docs only, not shipped crates): how to
-      wire `agx --export json` → `inspect-ai` / `lm-eval-harness` /
-      custom pipeline
-- [ ] Include anonymization checklist for dataset release
+**6.3 — Eval-framework adapter helpers** ✅ (shipped 2026-04-19)
+- [x] [docs/eval-integration.md](docs/eval-integration.md) documents
+      the full JSON schema emitted by `--export json` and
+      `--export trajectory-openai`, field by field, with stability
+      commitments pinned to the public-CLI-contract list
+      (suite-conventions §5). Schema breaks are release blockers.
+- [x] Copy-paste adapter recipes for inspect-ai, lm-evaluation-harness,
+      and a hand-rolled Python pipeline. All use subprocess over
+      `agx --export json` / `--export trajectory-openai`, staying on
+      the process boundary so no shared Rust crate leaks.
+- [x] Anonymization checklist — a 7-step process chaining
+      `--scan-pii` → `--redact` → re-scan plus user / host / path
+      sweep, corpus `--trajectory-stats` sanity check, and
+      third-party-tool-output license awareness. Covers the Phase 6.4
+      scanner workflow end-to-end.
+- [x] Schema-drift reporting section tells external integrators
+      exactly what to include when filing a break.
 
 **6.4 — Privacy & safety for dataset use** ✅ (scanner shipped 2026-04-19)
 - [x] `agx --scan-pii <session>` — heuristic credential / PII scanner.

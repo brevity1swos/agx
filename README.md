@@ -131,6 +131,8 @@ agx --export trajectory-openai --redact 'sk-abc123' --redact 'bearer xyz' <sessi
 # Heuristic scan for credentials / PII before publishing — catches AWS/Stripe/GitHub/
 # OpenAI/Anthropic keys, JWTs, SSH private-key PEM headers, emails, IPv4 addresses.
 # Read-only: reports matches + step indices, doesn't mutate. Pair with --redact.
+# Full workflow + adapter recipes for inspect-ai, lm-eval-harness, and custom
+# pipelines: docs/eval-integration.md.
 agx --scan-pii <session>
 
 # Diagnose format drift — prints every entry type or field the parser
