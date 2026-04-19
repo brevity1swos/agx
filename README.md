@@ -86,6 +86,10 @@ agx
 # Watch a live session as it's being written
 agx --live ~/.claude/projects/<project>/<session>.jsonl
 
+# Live mode with desktop notifications (opt-in: rebuild with `--features notifications`)
+agx --live --notify-on-error <session>          # OS notify on every new error tool_result
+agx --live --notify-on-idle 10m <session>       # OS notify when session hasn't grown for 10 minutes
+
 # Compare two sessions — text summary
 agx session_a.jsonl --diff session_b.jsonl
 # …or the interactive two-pane TUI (synchronized scrolling, color-coded alignment)

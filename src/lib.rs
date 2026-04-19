@@ -44,6 +44,7 @@ pub mod gemini;
 pub mod generic;
 pub mod langchain;
 pub mod loader;
+pub mod notify;
 pub mod otel_json;
 pub mod otel_proto;
 pub mod pricing;

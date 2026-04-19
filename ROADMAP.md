@@ -834,13 +834,36 @@ lean into MCP as the tool-call metadata layer matures.
 - [ ] Depends on ecosystem: ship progressively as MCP metadata surfaces
       in real sessions
 
-**5.3 — `--live` + desktop notifications**
-- [ ] Extend existing `--live` with `--notify-on-error`: when a new
-      `tool_result` arrives and `is_error_result` is true, send a native
-      OS notification via `notify-rust` (lightweight, cross-platform)
-- [ ] `--notify-on-idle <duration>`: fire when the session hasn't grown
-      for N seconds — useful for agents that hang
-- [ ] Notifications are opt-in per-flag; no background daemons
+**5.3 — `--live` + desktop notifications** ✅ (shipped 2026-04-19)
+- [x] `--notify-on-error` CLI flag: in `--live` mode, when a reload
+      adds new `tool_result` steps that match `is_error_result`, fire
+      one OS notification per new-error step. Best-effort: OS
+      notification failures return `Err` and are `.ok()`'d so a flaky
+      D-Bus / AppKit / WinRT never crashes the TUI.
+- [x] `--notify-on-idle <DURATION>` CLI flag: fires when the watched
+      session hasn't grown for the given duration. Duration grammar
+      reuses `slice::parse_duration_ms` (`30s` / `5m` / `1h`, compounds,
+      bare-int seconds) so the UX matches `--after` / `--before`.
+      Latched: fires at most once per idle interval, resets on growth.
+- [x] Both flags `requires = "live"` at the clap layer — they're
+      meaningless without the reload loop.
+- [x] Opt-in compile feature `--features notifications` pulls in
+      `notify-rust`. Default build is 2.6MB (unchanged, under 5MB
+      budget); feature-on pulls D-Bus / AppKit / WinRT bindings. When
+      a user sets either flag on a feature-off build, main.rs prints
+      a one-time stderr hint telling them exactly how to rebuild
+      (same posture as semantic-search feature-off).
+- [x] `src/notify.rs` module mirrors the `semantic.rs` pattern:
+      `pub fn error(label)` and `pub fn idle(duration_s)` that are
+      no-ops without the feature and thin `notify-rust` wrappers with
+      it. TUI event loop never needs `cfg!` checks.
+- [x] Live event loop in `tui::run_loop` tracks `last_growth` +
+      `idle_fired` locals. Error-scan snapshots the newly-added slice
+      *before* `reload_steps()` moves the vec (reload_steps otherwise
+      clears bookkeeping). Shrinkage (file truncation / rewrite) skips
+      error scanning since the delta isn't an append.
+- [x] 2 new unit tests in `notify.rs`: feature-disabled message
+      content check, no-op behavior on feature-off path.
 
 **5.4 — Replay a tool call** — `--experimental-replay` gate
 - [ ] `R` in TUI on a `tool_use` opens replay mode; detail pane becomes

@@ -875,12 +875,31 @@ impl Drop for TerminalGuard {
     }
 }
 
+/// Runtime configuration for live-mode desktop notifications. Kept
+/// here rather than in `notify.rs` because the field shape is a TUI
+/// concern — `notify.rs` owns only the "fire a notification" wrapper,
+/// not the policy for when to fire. Both fields are no-ops on a
+/// feature-off build (the `notify::error` / `notify::idle` calls
+/// return `Ok(())` without touching anything), so leaving this struct
+/// outside any `cfg` keeps the event loop readable.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NotifyConfig {
+    /// Fire a notification when a newly arrived `tool_result` matches
+    /// `is_error_result`.
+    pub on_error: bool,
+    /// Fire a notification when the session hasn't grown for at least
+    /// this many milliseconds. `None` disables. Fires at most once per
+    /// idle interval — growth resets the trigger.
+    pub on_idle_ms: Option<u64>,
+}
+
 pub fn run(
     steps: Vec<Step>,
     reload_fn: Option<&dyn Fn() -> Result<Vec<Step>>>,
     no_cost: bool,
     session_path: Option<&std::path::Path>,
     initial_step: Option<usize>,
+    notify: NotifyConfig,
 ) -> Result<()> {
     enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
@@ -905,7 +924,7 @@ pub fn run(
         app.apply_initial_step(n);
     }
 
-    let result = run_loop(&mut terminal, &mut app, reload_fn);
+    let result = run_loop(&mut terminal, &mut app, reload_fn, notify);
     let _ = terminal.show_cursor();
     result
 }
@@ -917,14 +936,52 @@ fn run_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
     reload_fn: Option<&dyn Fn() -> Result<Vec<Step>>>,
+    notify: NotifyConfig,
 ) -> Result<()> {
+    // Track the last time the session grew. Drives both --notify-on-idle
+    // (fire when too-long-since-growth) and the idle_fired latch that
+    // prevents the notification from re-firing every frame once the
+    // threshold has been crossed.
+    let mut last_growth = std::time::Instant::now();
+    let mut idle_fired = false;
     loop {
         // Live reload: poll file and refresh if step count changed.
         if let Some(reload) = reload_fn
             && let Ok(new_steps) = reload()
             && new_steps.len() != app.steps.len()
         {
+            let prev_len = app.steps.len();
+            let grew = new_steps.len() > prev_len;
+            // Snapshot the newly-added steps before reload_steps() moves
+            // the vec. For shrinkage (file truncation / rewrite) we
+            // skip error scanning entirely — the delta isn't an append.
+            let error_labels: Vec<String> = if grew && notify.on_error {
+                new_steps[prev_len..]
+                    .iter()
+                    .filter(|s| is_error_result(s))
+                    .map(|s| s.label.clone())
+                    .collect()
+            } else {
+                Vec::new()
+            };
             app.reload_steps(new_steps);
+            last_growth = std::time::Instant::now();
+            idle_fired = false;
+            for label in error_labels {
+                // Best-effort — a failed OS notification must never
+                // crash the live loop.
+                let _ = crate::notify::error(&label);
+            }
+        }
+
+        // Idle notification check runs every iteration (not just on
+        // reload) so we fire promptly once the threshold elapses.
+        if let Some(threshold_ms) = notify.on_idle_ms
+            && !idle_fired
+            && u64::try_from(last_growth.elapsed().as_millis()).unwrap_or(u64::MAX) >= threshold_ms
+        {
+            let _ = crate::notify::idle(threshold_ms / 1_000);
+            idle_fired = true;
         }
 
         terminal.draw(|f| {

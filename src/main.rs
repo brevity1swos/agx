@@ -108,6 +108,21 @@ struct Cli {
     #[arg(long, value_name = "STEP")]
     jump_to: Option<usize>,
 
+    /// In `--live` mode, fire a desktop notification whenever a newly
+    /// arrived `tool_result` looks like a failure (per the
+    /// `is_error_result` heuristic). Requires `--live`. Opt-in compile
+    /// feature: rebuild with `--features notifications`.
+    #[arg(long, requires = "live")]
+    notify_on_error: bool,
+
+    /// In `--live` mode, fire a desktop notification when the watched
+    /// session hasn't grown for this duration. Same grammar as
+    /// `--after` (`30s` / `5m` / `1h`, compounds, bare-int seconds).
+    /// Requires `--live`. Opt-in compile feature: rebuild with
+    /// `--features notifications`.
+    #[arg(long, value_name = "DURATION", requires = "live")]
+    notify_on_idle: Option<String>,
+
     /// Optional subcommand. When present, overrides the single-session
     /// flow. Today only `corpus` exists — it aggregates stats across
     /// every session file in a directory tree.
@@ -437,12 +452,38 @@ fn main() -> Result<()> {
     } else {
         None
     };
+
+    // Build the notify config. Idle duration parsing reuses the same
+    // duration grammar as `--after` / `--before` for consistency. When
+    // the `notifications` feature is off and the user passed a flag,
+    // print a one-time stderr hint so the flag isn't silently a no-op
+    // and proceed without notifications (same posture as the
+    // semantic-search feature-off dispatch).
+    let notify_idle_ms = match cli.notify_on_idle.as_deref() {
+        Some(s) => match agx::slice::parse_duration_ms(s) {
+            Ok(ms) => Some(ms),
+            Err(e) => {
+                eprintln!("agx: ignoring --notify-on-idle `{s}`: {e}");
+                None
+            }
+        },
+        None => None,
+    };
+    if (cli.notify_on_error || notify_idle_ms.is_some()) && !cfg!(feature = "notifications") {
+        eprintln!("agx: {}", agx::notify::FEATURE_DISABLED_MESSAGE);
+    }
+    let notify_cfg = tui::NotifyConfig {
+        on_error: cli.notify_on_error,
+        on_idle_ms: notify_idle_ms,
+    };
+
     tui::run(
         steps,
         reload_fn.as_deref(),
         cli.no_cost,
         Some(&session_path),
         cli.jump_to,
+        notify_cfg,
     )?;
     Ok(())
 }

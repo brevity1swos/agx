@@ -22,6 +22,11 @@ otel-proto = ["dep:prost"]
 #   cargo install agx --features embedding-search
 #   cargo build --release --features embedding-search
 embedding-search = ["dep:fastembed"]
+# Desktop notifications for `--notify-on-error` / `--notify-on-idle` in
+# live mode. Off by default because `notify-rust` pulls in D-Bus /
+# AppKit / WinRT bindings depending on platform. The feature-off path
+# prints a rebuild hint when the notification flags are used.
+notifications = ["dep:notify-rust"]
 
 [dependencies]
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
@@ -36,6 +41,10 @@ prost = { version = "0.13", optional = true }
 # Opt-in semantic search (see `embedding-search` feature above). Pure-Rust
 # ONNX runtime via `ort`; default MiniLM-L6-v2 model is ~90MB on first use.
 fastembed = { version = "5", optional = true }
+# Opt-in native-OS notifications for `--live` mode's error / idle
+# detection. Platform-specific transitive deps (D-Bus on Linux, AppKit
+# on macOS, WinRT on Windows) are why this is feature-gated.
+notify-rust = { version = "4", optional = true }
 # Parallel parsing in `agx corpus <dir>`. Pulls in `rayon-core` + `crossbeam`
 # helpers (both pure-Rust, no OS-specific transitive deps). Small enough
 # to earn its place given the target use case of scanning thousands of
