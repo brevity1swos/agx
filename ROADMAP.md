@@ -996,12 +996,38 @@ CLI agent." Prior roadmap had nothing for it.
       supervised case; ship when there's a concrete user ask it
       doesn't already satisfy.
 
-**6.2 — Dataset-level inspection**
-- [ ] `agx corpus <dir> --trajectory-stats`: tokens per trajectory
-      distribution, tool-call counts, branch-rate, annotation counts —
-      the numbers a researcher needs before publishing a dataset
-- [ ] `agx corpus <dir> --sample <N>` — random-sample N sessions into the
-      TUI viewer for manual spot-check
+**6.2 — Dataset-level inspection** ✅ (shipped 2026-04-19)
+- [x] `agx corpus <dir> --trajectory-stats`: replaces the default
+      aggregate output with a distributional breakdown. For each of
+      steps / tool-calls / tokens-in / tokens-out per session, emits
+      min / p50 / p90 / p99 / max / mean / total (nearest-rank
+      percentiles — matches numpy's "lower" interpolation on integer
+      distributions). Also reports branched / annotated / errored
+      *rates* (fraction of sessions, not counts — session-level
+      signal is what researchers care about). Combines with `--json`
+      for machine-readable output; combines with `--jsonl` by
+      emitting per-session lines to stdout and the stats blob to
+      stderr so both streams stay usable in pipelines.
+- [x] `agx corpus <dir> --sample <N>` — keeps the N most-recent
+      sessions (by mtime descending) after filter application.
+      Deterministic — random sampling deferred (would need a PRNG
+      dep or hand-rolled LCG; users who need true random can `ls -u
+      | shuf | head`). `--filter model=X --sample 20` gives the 20
+      newest X-model sessions, which is the concrete spot-check
+      workflow.
+- [x] `ParsedSession.fork_root_count: usize` field + `SessionLine.fork_root_count`
+      JSONL field. Populated during `load_parallel` via
+      `timeline::fork_root_count(&steps)` before the steps are moved.
+      Non-Claude-Code parsers always yield 0, so this is essentially
+      free except on the branched format.
+- [x] `Distribution` + `TrajectoryStats` types are public on the
+      library surface so external bench / integration consumers (the
+      agx-core split in Phase 7) can rely on them. Schema is stable
+      from shipped.
+- [x] 9 new tests: distribution min/p50/p90/p99/max on sorted &
+      unsorted input, empty-slice default, empty-corpus
+      `TrajectoryStats`, branched/annotated/errored rate
+      calculation, steps distribution correctness.
 
 **6.3 — Eval-framework adapter helpers**
 - [ ] Document the exact JSON schema used by Phase 1.4's `--export json`

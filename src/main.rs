@@ -199,6 +199,23 @@ struct CorpusArgs {
     /// combine with any of --json / --jsonl / --tui / default text.
     #[arg(long)]
     fail_on_errored: bool,
+
+    /// Replace the default aggregate output with a distributional
+    /// breakdown: per-session percentiles (min / p50 / p90 / p99 /
+    /// max / mean / total) for steps, tool calls, tokens_in, tokens_out;
+    /// plus branched / annotated / errored rates. Combines with
+    /// `--json` for machine-readable output. Phase 6.2 spot-check
+    /// for dataset prep.
+    #[arg(long)]
+    trajectory_stats: bool,
+
+    /// Keep only the N most-recent sessions (by mtime descending)
+    /// after filters. Applied *after* `--filter` so
+    /// `--filter model=X --sample 20` gives the 20 newest X-model
+    /// sessions. Deterministic — random sampling is a follow-up
+    /// tracked in the roadmap.
+    #[arg(long, value_name = "N")]
+    sample: Option<usize>,
 }
 
 // `load_session` itself lives in src/loader.rs so both the single-session
@@ -309,6 +326,8 @@ fn main() -> Result<()> {
             tui: args.tui,
             jsonl: args.jsonl,
             fail_on_errored: args.fail_on_errored,
+            trajectory_stats: args.trajectory_stats,
+            sample: args.sample,
         };
         return corpus::run(&corpus_args);
     }

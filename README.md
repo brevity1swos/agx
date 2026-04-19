@@ -141,6 +141,8 @@ agx corpus <dir> --filter annotated             # keep only sessions with ≥1 a
 agx corpus <dir> --tui                         # interactive browser: list + detail, Enter drills in
 agx corpus <dir> --jsonl | jq '.cost_usd'      # one JSON-per-session on stdout; parse errors on stderr
 agx corpus <dir> --fail-on-errored             # exit nonzero if any parse error / tool error — CI-friendly
+agx corpus <dir> --trajectory-stats            # distributional stats (steps/toks/etc percentiles + branch/annot/error rates)
+agx corpus <dir> --sample 20                   # keep only 20 most-recent sessions (composes with --filter)
 ```
 
 ## Use on your own sessions

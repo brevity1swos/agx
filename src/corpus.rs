@@ -103,6 +103,11 @@ pub struct ParsedSession {
     /// scan (read from `~/.agx/notes/`). Used by `Filter::Annotated`
     /// and surfaced in `--jsonl` output for downstream tooling.
     pub annotation_count: usize,
+    /// Number of fork-root steps in this session. Non-zero only for
+    /// Claude Code sessions with edit/resume branches (Phase 5.1).
+    /// Feeds `--trajectory-stats` branch-rate and is surfaced in
+    /// `--jsonl` output.
+    pub fork_root_count: usize,
 }
 
 #[derive(Debug)]
@@ -186,6 +191,11 @@ pub fn load_parallel(paths: &[PathBuf]) -> (Vec<ParsedSession>, Vec<ParseError>)
                 // to do unconditionally so we can filter / display
                 // without a second pass.
                 let annotation_count = crate::annotations::Annotations::load_for(&path).notes.len();
+                // Compute fork-root count before `steps` is moved so
+                // we don't have to re-walk. Non-Claude-Code formats
+                // always yield 0, so this is essentially free for
+                // everything except Claude Code.
+                let fork_root_count = crate::timeline::fork_root_count(&steps);
                 parsed.push(ParsedSession {
                     path,
                     format: fmt,
@@ -194,6 +204,7 @@ pub fn load_parallel(paths: &[PathBuf]) -> (Vec<ParsedSession>, Vec<ParseError>)
                     step_count: steps.len(),
                     mtime_secs,
                     annotation_count,
+                    fork_root_count,
                 });
             }
             LoadOutcome::Skip => {}
@@ -371,6 +382,142 @@ pub fn aggregate(
     stats
 }
 
+/// One metric's distribution across the corpus — percentiles plus the
+/// sum. Kept alongside the aggregate `CorpusStats` struct because the
+/// shape is different (cross-session min/p50/p90/p99/max) and the
+/// rendering is only used by `--trajectory-stats`.
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct Distribution {
+    pub min: u64,
+    pub p50: u64,
+    pub p90: u64,
+    pub p99: u64,
+    pub max: u64,
+    pub mean: f64,
+    pub total: u64,
+}
+
+impl Distribution {
+    /// Build a distribution from an unsorted slice of per-session
+    /// values. Zero-length input yields all-zero values so callers
+    /// never have to branch. `mean` is `0.0` in that case rather than
+    /// `NaN`.
+    fn from_values(values: &[u64]) -> Self {
+        if values.is_empty() {
+            return Self::default();
+        }
+        let mut v = values.to_vec();
+        v.sort_unstable();
+        let n = v.len();
+        let pick = |p: f64| -> u64 {
+            // Nearest-rank percentile. Matches numpy's "lower"
+            // interpolation and is the simplest correct choice for
+            // integer-valued distributions. Clamp to valid indices.
+            let idx = ((n as f64) * p).ceil() as usize;
+            let idx = idx.saturating_sub(1).min(n - 1);
+            v[idx]
+        };
+        let total: u64 = v.iter().sum();
+        #[allow(clippy::cast_precision_loss)]
+        let mean = total as f64 / n as f64;
+        Self {
+            min: v[0],
+            p50: pick(0.50),
+            p90: pick(0.90),
+            p99: pick(0.99),
+            max: v[n - 1],
+            mean,
+            total,
+        }
+    }
+}
+
+/// Dataset-level distribution stats for `agx corpus --trajectory-stats`.
+/// Serialized directly when `--json` is combined; rendered as a terse
+/// text report otherwise.
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct TrajectoryStats {
+    pub session_count: usize,
+    pub steps_per_session: Distribution,
+    pub tool_calls_per_session: Distribution,
+    pub tokens_in_per_session: Distribution,
+    pub tokens_out_per_session: Distribution,
+    /// Fraction of sessions (0.0–1.0) that contain at least one fork
+    /// root. Non-zero only when the corpus includes Claude Code
+    /// edit/resume sessions.
+    pub branched_rate: f64,
+    /// Fraction of sessions with ≥1 stored annotation.
+    pub annotated_rate: f64,
+    /// Fraction of sessions where any tool_result matched the
+    /// `is_error_result` heuristic.
+    pub errored_rate: f64,
+}
+
+/// Build a `TrajectoryStats` from the surviving `ParsedSession` slice.
+/// Pure function — the render step takes the output and prints
+/// separately. Extracted so tests can assert on the stats struct
+/// without spinning up a full run.
+pub fn compute_trajectory_stats(parsed: &[ParsedSession]) -> TrajectoryStats {
+    let session_count = parsed.len();
+    if session_count == 0 {
+        return TrajectoryStats::default();
+    }
+    let steps: Vec<u64> = parsed.iter().map(|p| p.step_count as u64).collect();
+    let tool_calls: Vec<u64> = parsed
+        .iter()
+        .map(|p| p.tool_stats.iter().map(|t| t.use_count as u64).sum())
+        .collect();
+    let tokens_in: Vec<u64> = parsed.iter().map(|p| p.totals.tokens_in).collect();
+    let tokens_out: Vec<u64> = parsed.iter().map(|p| p.totals.tokens_out).collect();
+    #[allow(clippy::cast_precision_loss)]
+    let branched =
+        parsed.iter().filter(|p| p.fork_root_count > 0).count() as f64 / session_count as f64;
+    #[allow(clippy::cast_precision_loss)]
+    let annotated =
+        parsed.iter().filter(|p| p.annotation_count > 0).count() as f64 / session_count as f64;
+    #[allow(clippy::cast_precision_loss)]
+    let errored = parsed
+        .iter()
+        .filter(|p| p.tool_stats.iter().any(|t| t.error_count > 0))
+        .count() as f64
+        / session_count as f64;
+    TrajectoryStats {
+        session_count,
+        steps_per_session: Distribution::from_values(&steps),
+        tool_calls_per_session: Distribution::from_values(&tool_calls),
+        tokens_in_per_session: Distribution::from_values(&tokens_in),
+        tokens_out_per_session: Distribution::from_values(&tokens_out),
+        branched_rate: branched,
+        annotated_rate: annotated,
+        errored_rate: errored,
+    }
+}
+
+fn print_trajectory_stats_text(stats: &TrajectoryStats) {
+    println!("Trajectory stats — {} sessions", stats.session_count);
+    if stats.session_count == 0 {
+        println!("  (no sessions after filter / sample)");
+        return;
+    }
+    let row = |label: &str, d: &Distribution| {
+        println!(
+            "  {label:<22}  min={:>8}  p50={:>8}  p90={:>8}  p99={:>8}  max={:>8}  mean={:>10.1}  total={:>12}",
+            d.min, d.p50, d.p90, d.p99, d.max, d.mean, d.total
+        );
+    };
+    row("steps/session", &stats.steps_per_session);
+    row("tool_calls/session", &stats.tool_calls_per_session);
+    row("tokens_in/session", &stats.tokens_in_per_session);
+    row("tokens_out/session", &stats.tokens_out_per_session);
+    println!();
+    println!(
+        "  branched:  {:>5.1}%    annotated: {:>5.1}%    errored: {:>5.1}%",
+        stats.branched_rate * 100.0,
+        stats.annotated_rate * 100.0,
+        stats.errored_rate * 100.0
+    );
+}
+
 /// Arguments for the `agx corpus` subcommand. Wired up in `main.rs`.
 #[derive(Debug)]
 pub struct CorpusArgs {
@@ -396,6 +543,18 @@ pub struct CorpusArgs {
     /// tool_result across the corpus matched the is_error_result
     /// heuristic. Exit 0 otherwise. Orthogonal to the rendering mode.
     pub fail_on_errored: bool,
+    /// When true, replace the default aggregate rendering with a
+    /// distributional breakdown across the corpus (percentiles for
+    /// steps / tool-calls / tokens, plus branch / annotation / error
+    /// rates). Combines with `--json` for machine-readable output.
+    /// Phase 6.2 — the numbers a researcher needs before publishing a
+    /// trajectory dataset.
+    pub trajectory_stats: bool,
+    /// When set, keep only the first N sessions after sorting by
+    /// mtime descending (most recent first). Applied *after* filters
+    /// so `--filter model=X --sample 20` gives you the 20 most
+    /// recent sessions of that model. Phase 6.2 spot-check workflow.
+    pub sample: Option<usize>,
 }
 
 /// Entry point called from `main.rs::main`. Walks the directory, loads
@@ -417,6 +576,19 @@ pub fn run(args: &CorpusArgs) -> Result<()> {
         parsed.retain(|p| args.filters.iter().all(|f| f.matches(p)));
     }
     let filtered_out = before_filter - parsed.len();
+    // `--sample N` keeps the N most-recent-by-mtime sessions. Applied
+    // after filters so `--filter model=X --sample 20` gives the 20
+    // most recent X-model sessions. Deterministic (not random) to
+    // avoid adding a PRNG dep and to keep runs reproducible — users
+    // who want true random can `ls -u | shuf | head` and pass the
+    // file list via another mechanism (future `--sample-random`
+    // follow-up if demand surfaces).
+    if let Some(n) = args.sample
+        && parsed.len() > n
+    {
+        parsed.sort_by_key(|p| std::cmp::Reverse(p.mtime_secs));
+        parsed.truncate(n);
+    }
     let stats = aggregate(&parsed, &errors, file_count, filtered_out);
     let agg_ms = t_agg.elapsed().as_secs_f64() * 1000.0;
 
@@ -435,7 +607,23 @@ pub fn run(args: &CorpusArgs) -> Result<()> {
         .sum();
     let fail_on_errored = args.fail_on_errored && (parse_error_count > 0 || tool_error_count > 0);
 
-    if args.tui {
+    if args.trajectory_stats {
+        // `--trajectory-stats` replaces the default aggregate rendering
+        // with a distributional breakdown. Still compatible with `--json`
+        // (emit the TrajectoryStats struct as JSON) and `--jsonl` (emit
+        // stats to stderr so stdout stays per-session JSONL).
+        let tstats = compute_trajectory_stats(&parsed);
+        if args.jsonl {
+            // Keep stdout per-session JSONL; dump trajectory stats to
+            // stderr so both streams stay usable in a pipeline.
+            print_jsonl(&parsed, &errors);
+            eprintln!("{}", serde_json::to_string_pretty(&tstats)?);
+        } else if args.json {
+            println!("{}", serde_json::to_string_pretty(&tstats)?);
+        } else {
+            print_trajectory_stats_text(&tstats);
+        }
+    } else if args.tui {
         // Drop into the interactive corpus TUI. When the user selects a
         // session and hits Enter, the outer loop re-runs the TUI after
         // the drill-in per-session TUI exits.
@@ -567,6 +755,7 @@ struct SessionLine {
     tool_counts: Vec<ToolLine>,
     error_count: usize,
     annotation_count: usize,
+    fork_root_count: usize,
     mtime_secs: Option<u64>,
 }
 
@@ -599,6 +788,7 @@ fn session_to_line(s: &ParsedSession) -> SessionLine {
             .collect(),
         error_count: s.tool_stats.iter().map(|t| t.error_count).sum(),
         annotation_count: s.annotation_count,
+        fork_root_count: s.fork_root_count,
         mtime_secs: s.mtime_secs,
     }
 }
@@ -638,6 +828,7 @@ mod tests {
             tool_stats,
             mtime_secs: None,
             annotation_count: 0,
+            fork_root_count: 0,
         }
     }
 
@@ -826,5 +1017,131 @@ mod tests {
             result_count: 0,
             error_count: 0,
         };
+    }
+
+    // -------- Phase 6.2 trajectory stats --------
+
+    #[test]
+    fn distribution_empty_slice_is_all_zero() {
+        let d = Distribution::from_values(&[]);
+        assert_eq!(d.min, 0);
+        assert_eq!(d.max, 0);
+        assert_eq!(d.mean, 0.0);
+        assert_eq!(d.total, 0);
+    }
+
+    #[test]
+    fn distribution_single_value() {
+        let d = Distribution::from_values(&[42]);
+        assert_eq!(d.min, 42);
+        assert_eq!(d.p50, 42);
+        assert_eq!(d.p90, 42);
+        assert_eq!(d.p99, 42);
+        assert_eq!(d.max, 42);
+        assert!((d.mean - 42.0).abs() < 1e-6);
+        assert_eq!(d.total, 42);
+    }
+
+    #[test]
+    fn distribution_percentiles_on_ordered_integers() {
+        // 1..=100 — p50 should be 50, p90 ≈ 90, p99 ≈ 99, max 100.
+        let values: Vec<u64> = (1..=100).collect();
+        let d = Distribution::from_values(&values);
+        assert_eq!(d.min, 1);
+        assert_eq!(d.max, 100);
+        assert_eq!(d.p50, 50);
+        assert_eq!(d.p90, 90);
+        assert_eq!(d.p99, 99);
+        assert_eq!(d.total, 5050);
+        assert!((d.mean - 50.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn distribution_handles_unsorted_input() {
+        // Input order doesn't matter — the constructor sorts internally.
+        let a = Distribution::from_values(&[5, 1, 3, 2, 4]);
+        let b = Distribution::from_values(&[1, 2, 3, 4, 5]);
+        assert_eq!(a.min, b.min);
+        assert_eq!(a.max, b.max);
+        assert_eq!(a.p50, b.p50);
+        assert_eq!(a.total, b.total);
+    }
+
+    #[test]
+    fn trajectory_stats_empty_corpus() {
+        let stats = compute_trajectory_stats(&[]);
+        assert_eq!(stats.session_count, 0);
+        assert_eq!(stats.branched_rate, 0.0);
+        assert_eq!(stats.annotated_rate, 0.0);
+        assert_eq!(stats.errored_rate, 0.0);
+    }
+
+    #[test]
+    fn trajectory_stats_branched_rate_counts_fork_roots() {
+        let a = {
+            let mut s = mk_session("a.jsonl", Format::ClaudeCode, Vec::new());
+            s.fork_root_count = 2;
+            s
+        };
+        let b = mk_session("b.jsonl", Format::ClaudeCode, Vec::new());
+        let c = {
+            let mut s = mk_session("c.jsonl", Format::Gemini, Vec::new());
+            s.fork_root_count = 1;
+            s
+        };
+        let stats = compute_trajectory_stats(&[a, b, c]);
+        assert_eq!(stats.session_count, 3);
+        // 2 of 3 sessions have forks.
+        assert!((stats.branched_rate - 2.0 / 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn trajectory_stats_annotated_rate_counts_annotation_count() {
+        let mut a = mk_session("a", Format::ClaudeCode, Vec::new());
+        a.annotation_count = 3;
+        let b = mk_session("b", Format::ClaudeCode, Vec::new());
+        let stats = compute_trajectory_stats(&[a, b]);
+        assert!((stats.annotated_rate - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn trajectory_stats_errored_rate_counts_sessions_not_errors() {
+        // A session with 5 errors still counts as 1 errored session;
+        // the rate is session-level, not error-level.
+        let a = mk_session(
+            "a",
+            Format::ClaudeCode,
+            vec![crate::timeline::tool_result_step(
+                "t1",
+                "error: bad",
+                Some("X"),
+                None,
+            )],
+        );
+        // A clean session.
+        let b = mk_session("b", Format::ClaudeCode, Vec::new());
+        let stats = compute_trajectory_stats(&[a, b]);
+        assert!((stats.errored_rate - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn trajectory_stats_steps_distribution_reflects_step_counts() {
+        let a = mk_session(
+            "a",
+            Format::ClaudeCode,
+            vec![
+                crate::timeline::user_text_step("one"),
+                crate::timeline::assistant_text_step("two"),
+            ],
+        );
+        let b = mk_session(
+            "b",
+            Format::ClaudeCode,
+            vec![crate::timeline::user_text_step("solo")],
+        );
+        let stats = compute_trajectory_stats(&[a, b]);
+        assert_eq!(stats.steps_per_session.min, 1);
+        assert_eq!(stats.steps_per_session.max, 2);
+        assert_eq!(stats.steps_per_session.total, 3);
     }
 }
