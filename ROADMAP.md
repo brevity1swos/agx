@@ -960,17 +960,41 @@ CLI agent." Prior roadmap had nothing for it.
 
 ### Subplans
 
-**6.1 — Trajectory export formats**
-- [ ] `--export trajectory-openai` — OpenAI fine-tuning JSONL (`{messages:
-      [{role, content, tool_calls}]}`)
-- [ ] `--export trajectory-hermes` — Hermes / ShareGPT-style role+content
-      with tool segments as dedicated messages
-- [ ] `--export trajectory-dpo` — pairs of (chosen, rejected) trajectories
-      when agx can infer them from branches (Phase 5.1) or annotations
-- [ ] `--export trajectory-sft` — supervised fine-tuning-ready: strip
-      system prompts or keep, include tool I/O verbatim or summarize
-- [ ] All exports take a `--redact` flag with a regex list that masks
-      matches in tool outputs (redacting secrets before dataset release)
+**6.1 — Trajectory export formats** (core shipped 2026-04-19; long-tail formats deferred)
+- [x] `--export trajectory-openai` — one JSONL line per session, shape
+      `{messages: [{role, content, tool_calls?, tool_call_id?}]}`.
+      UserText → `user`, AssistantText → `assistant`, ToolUse →
+      `assistant` with `tool_calls[]`, ToolResult → `tool` with the
+      matching `tool_call_id`. Directly usable with OpenAI's fine-
+      tuning / batch endpoints.
+- [x] `--redact <NEEDLE>` flag (repeatable) masks literal substrings
+      in every export format (md / html / json / trajectory-openai).
+      Applied via `export::redacted_steps` once per run so every
+      exporter sees the same redacted slice. Safe-by-default: empty
+      needles are skipped so `--redact ''` can't nuke the output.
+      Redactions happen before annotations, before totals recompute.
+- [x] `Step.tool_call_id: Option<String>` field added to the shared
+      model so trajectory exporters can pair tool_use ↔ tool_result
+      explicitly instead of parsing IDs out of detail strings. Every
+      tool_use_step / tool_result_step caller across 7 parsers now
+      passes it through. `#[serde(skip_serializing_if = "Option::is_none")]`
+      keeps the JSON export small for non-tool steps.
+- [x] 10 new unit tests cover: redaction replacement / idempotency /
+      empty-needle safety, `redacted_steps` source-preservation and
+      empty-pattern identity, `trajectory_openai` single-line JSONL
+      shape, role mapping, tool_call_id pairing, end-to-end redact
+      through the export, and `extract_input_section` /
+      `extract_result_section` graceful fallback.
+- [ ] **Deferred**: `--export trajectory-hermes`. Shape overlaps
+      heavily with trajectory-openai; add if dogfood demand surfaces.
+- [ ] **Deferred**: `--export trajectory-dpo`. Needs a
+      pair-selection rule over branches (Phase 5.1 forks) or
+      annotations — non-trivial design question. Revisit once a
+      real eval user asks.
+- [ ] **Deferred**: `--export trajectory-sft` with `--strip-system` /
+      summarization options. Close to trajectory-openai for the
+      supervised case; ship when there's a concrete user ask it
+      doesn't already satisfy.
 
 **6.2 — Dataset-level inspection**
 - [ ] `agx corpus <dir> --trajectory-stats`: tokens per trajectory

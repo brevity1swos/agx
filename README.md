@@ -114,12 +114,19 @@ agx --jump-to 42 <session>
 # render as a magenta `*` prefix in the list + `[note: ...]` in the detail pane.
 # Press `A` for a list of every note with Enter-to-jump navigation.
 
-# Export a transcript to stdout — formats: md | html | json. Notes (if any)
-# are surfaced in all three: md blockquote, html `<div class="note">`, json
-# `annotations` array.
-agx --export md   <session> > session.md
-agx --export html <session> > session.html
-agx --export json <session> > session.json
+# Export a transcript to stdout — formats: md | html | json | trajectory-openai.
+# Notes (if any) are surfaced in md/html/json: md blockquote, html `<div class="note">`,
+# json `annotations` array. trajectory-openai emits one line of OpenAI fine-tuning
+# JSONL (`{messages: [{role, content, tool_calls?, tool_call_id?}]}`) — ready to
+# `cat *.openai.jsonl | openai file upload …`.
+agx --export md                <session> > session.md
+agx --export html              <session> > session.html
+agx --export json              <session> > session.json
+agx --export trajectory-openai <session> > session.openai.jsonl
+
+# Strip secrets before publishing a dataset — literal substring mask, repeatable,
+# applies to every --export format.
+agx --export trajectory-openai --redact 'sk-abc123' --redact 'bearer xyz' <session>
 
 # Diagnose format drift — prints every entry type or field the parser
 # didn't recognize, to stderr. Useful when a new CLI version lands.

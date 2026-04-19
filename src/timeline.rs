@@ -35,6 +35,15 @@ pub struct Step {
     /// the TUI fork list overlay and status-bar fork count (Phase 5.1).
     #[serde(default)]
     pub is_fork_root: bool,
+    /// The tool-call ID for `ToolUse` / `ToolResult` steps, pairing
+    /// them across the timeline. Populated by `tool_use_step` and
+    /// `tool_result_step`; every format parser passes this through
+    /// from its native ID field. Powers Phase 6 trajectory exports
+    /// (OpenAI fine-tuning format needs the explicit ID on each
+    /// tool_calls entry and on the matching tool message). `None`
+    /// for non-tool step kinds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
 }
 
 impl Step {
@@ -457,6 +466,7 @@ pub(crate) fn tool_use_step(id: &str, name: &str, input_pretty: &str) -> Step {
         detail: format!("Tool: {name}\nID: {id}\n\nInput:\n{input_pretty}"),
         kind: StepKind::ToolUse,
         tool_name: Some(name.to_string()),
+        tool_call_id: Some(id.to_string()),
         ..Step::default()
     }
 }
@@ -480,6 +490,7 @@ pub(crate) fn tool_result_step(
         detail: format!("Tool: {display_name}\nID: {id}\n\n{input_section}Result:\n{result}"),
         kind: StepKind::ToolResult,
         tool_name: tool_name.map(str::to_string),
+        tool_call_id: Some(id.to_string()),
         ..Step::default()
     }
 }

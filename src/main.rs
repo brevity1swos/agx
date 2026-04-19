@@ -19,6 +19,11 @@ enum ExportFormat {
     Md,
     Html,
     Json,
+    /// OpenAI fine-tuning JSONL (one JSON object per session,
+    /// `{messages: [{role, content, tool_calls?, tool_call_id?}]}`).
+    /// See docs/suite-conventions.md §5 for the stability contract.
+    #[value(name = "trajectory-openai")]
+    TrajectoryOpenai,
 }
 
 #[derive(Parser, Debug)]
@@ -65,6 +70,15 @@ struct Cli {
     /// launching the TUI. Mutually exclusive with --summary.
     #[arg(long, value_enum, value_name = "FORMAT")]
     export: Option<ExportFormat>,
+
+    /// Mask literal substrings in exported output (tool inputs and
+    /// tool results). Repeat the flag to mask multiple patterns. Every
+    /// match is replaced with `[REDACTED]`. Useful before publishing
+    /// trajectories as a training dataset — strip API keys, paths,
+    /// usernames that crept into shell output. Applies to every
+    /// `--export` format.
+    #[arg(long, value_name = "NEEDLE")]
+    redact: Vec<String>,
 
     /// Print load / parse / render timing breakdown to stderr. Hidden
     /// diagnostic flag for performance-regression reports.
@@ -389,6 +403,12 @@ fn main() -> Result<()> {
     }
 
     if let Some(fmt) = cli.export {
+        // Redact first (no-op when `--redact` wasn't passed), then
+        // recompute totals on the redacted shape so any model /
+        // token counts that happened to contain a redacted substring
+        // stay internally consistent. Every exporter below sees the
+        // same redacted slice.
+        let steps = export::redacted_steps(&steps, &cli.redact);
         let totals = compute_session_totals(&steps);
         // Load annotations eagerly for export so the rendered output
         // reflects on-disk notes. Fault-tolerant: a missing or malformed
@@ -403,6 +423,7 @@ fn main() -> Result<()> {
             ExportFormat::Json => export::json(&steps, &totals, ann_ref)?,
             ExportFormat::Md => export::markdown(&steps, &totals, cli.no_cost, ann_ref),
             ExportFormat::Html => export::html(&steps, &totals, cli.no_cost, ann_ref),
+            ExportFormat::TrajectoryOpenai => export::trajectory_openai(&steps)?,
         };
         print!("{out}");
         return Ok(());
