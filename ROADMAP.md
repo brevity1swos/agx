@@ -5,6 +5,31 @@ minor version (v0.2, v0.3, …). Phases are ordered by dependency, not by
 calendar — ship a phase when it's ready, not on a schedule. Work inside a
 phase can be parallelized across contributors.
 
+## Status at a glance
+
+| Phase | Title                                        | Status                                             |
+|-------|----------------------------------------------|----------------------------------------------------|
+| 0     | v0.1.x Stabilization                         | ✅ shipped (2026-04-14)                            |
+| 1     | v0.2 Observability & Cost                    | ✅ shipped (2026-04-15)                            |
+| 2     | v0.3 OTel GenAI + Framework Traces           | ✅ shipped (2026-04-18)                            |
+| 3     | v0.4 Corpus Analysis & Performance           | ✅ shipped (3.1 – 3.4; criterion in 3.2 shipped)   |
+| 4     | v0.5 Diff, Search Depth, Annotations         | ✅ shipped (4.1 – 4.4)                             |
+| 5     | v0.6 Branch, Replay, MCP-Aware Tool Calls    | 🟡 3 of 5 (5.1 / 5.3 / 5.5 shipped; 5.2 🚧 5.4 ⏳)  |
+| 6     | v0.7 RL Export + Eval-Harness                | ✅ shipped (6.1 – 6.4; long-tail exports deferred) |
+| 7     | v0.8 Library Mode                            | ✅ shipped (7.1 – 7.4 scaffolds; 7.4b CI ⏳)       |
+| 8     | v1.0 Long Tail, Docs, Stabilization          | 🔲 started (8.5 agx doctor + retrofits shipped)    |
+
+**Legend:** ✅ shipped · 🟡 partial · 🔲 not started · 🚧 blocked (external) · ⏳ design-pending
+
+**Out-of-band tracks** (not bound to a phase): `agx-mcp` MCP server
+for agent self-introspection (shipped), `agx doctor` subcommand
+(shipped), `docs/agent-guide.md` natural-language cookbook
+(shipped), `docs/mcp-integration.md` (shipped).
+
+See [`CHANGELOG.md`](CHANGELOG.md) for per-commit detail. Subplan-
+level status + deferred items are documented inline under each phase
+heading below.
+
 ## Executive summary
 
 **What changed in this revision.** The prior roadmap implicitly treated agx
