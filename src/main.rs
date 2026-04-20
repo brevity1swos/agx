@@ -400,7 +400,12 @@ fn main() -> Result<()> {
             trajectory_stats: args.trajectory_stats,
             sample: args.sample,
         };
-        return corpus::run(&corpus_args);
+        // agx-core doesn't carry TUI deps, so it can't drop into
+        // the interactive corpus TUI itself. The bin crate owns
+        // `corpus_tui::run`; thread it through as the launcher.
+        return corpus::run(&corpus_args, &|parsed, stats, no_cost| {
+            agx::corpus_tui::run(parsed, stats, no_cost)
+        });
     }
 
     let session_path = if let Some(p) = cli.session {

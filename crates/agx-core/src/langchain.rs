@@ -305,7 +305,7 @@ mod tests {
 
     #[test]
     fn parses_fixture_end_to_end() {
-        let steps = load(Path::new("assets/sample_langchain_export.json")).unwrap();
+        let steps = load(Path::new("../../assets/sample_langchain_export.json")).unwrap();
         // Fixture walk: user → assistant text → tool_use → tool_result → assistant text
         assert_eq!(steps.len(), 5);
         assert_eq!(steps[0].kind, StepKind::UserText);
@@ -321,7 +321,7 @@ mod tests {
 
     #[test]
     fn attaches_model_and_usage_to_first_chat_model_step() {
-        let steps = load(Path::new("assets/sample_langchain_export.json")).unwrap();
+        let steps = load(Path::new("../../assets/sample_langchain_export.json")).unwrap();
         // First assistant step = steps[1] in fixture order. Model + tokens
         // of the first chat_model run attach here (per the shared anchor
         // convention), not to the subsequent tool_use step from the same run.
@@ -333,7 +333,7 @@ mod tests {
 
     #[test]
     fn second_chat_model_run_carries_its_own_usage() {
-        let steps = load(Path::new("assets/sample_langchain_export.json")).unwrap();
+        let steps = load(Path::new("../../assets/sample_langchain_export.json")).unwrap();
         // Second assistant step is the last one emitted; second chat_model's
         // usage attaches there (anchor convention).
         let last = steps.last().unwrap();

@@ -1,3 +1,15 @@
+[workspace]
+members = ["crates/agx-core"]
+# The top-level `agx` crate is still defined below (it's the one
+# users run as `agx …`); listing it in `members` isn't needed because
+# the manifest root is implicitly a workspace member.
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/brevity1swos/agx"
+
 [package]
 name = "agx"
 version = "0.1.0"
@@ -5,51 +17,43 @@ edition = "2024"
 rust-version = "1.85"
 description = "Step-through debugger for your agent"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/brevity1swos/agx"
 
 [features]
-# Binary OTLP (.pb / .otlp) support. Off by default because `prost` + its
-# transitive deps add ~500KB to the binary. Users who only consume JSON
-# traces don't pay this cost. Enable with:
+# Feature flags are re-exported from agx-core so users flip the same
+# names on either crate. The top-level `agx` bin just pulls them
+# through to the library side.
+default = []
+# Binary OTLP (.pb / .otlp) support. Off by default because `prost`
+# adds ~500KB of transitive deps. Enable with:
 #   cargo install agx --features otel-proto
 #   cargo build --release --features otel-proto
-default = []
-otel-proto = ["dep:prost"]
-# Semantic search over session steps. Off by default because `fastembed`
-# pulls in `ort` (ONNX Runtime) + `tokenizers` + `hf-hub`, adding tens of
-# MB to the binary and a one-time model download on first use. Without
-# this feature, the `//query` prefix in the TUI search prompt surfaces a
-# "rebuild with --features embedding-search" message. Enable with:
-#   cargo install agx --features embedding-search
-#   cargo build --release --features embedding-search
-embedding-search = ["dep:fastembed"]
-# Desktop notifications for `--notify-on-error` / `--notify-on-idle` in
-# live mode. Off by default because `notify-rust` pulls in D-Bus /
-# AppKit / WinRT bindings depending on platform. The feature-off path
-# prints a rebuild hint when the notification flags are used.
-notifications = ["dep:notify-rust"]
+otel-proto = ["agx-core/otel-proto"]
+# Semantic search (opt-in). fastembed + ONNX runtime, ~90MB model
+# on first use.
+embedding-search = ["agx-core/embedding-search"]
+# Desktop notifications for --notify-on-* in --live mode.
+notifications = ["agx-core/notifications"]
 
 [dependencies]
+# Pure parsers + timeline + corpus aggregation live in agx-core.
+# The feature flags above pass through so this crate's callers only
+# need to flip them on `agx` (the bin), not on `agx-core` directly.
+agx-core = { path = "crates/agx-core" }
+# TUI layer — ratatui + crossterm + arboard. These are the deps
+# that justify keeping agx-core separate: they're irrelevant to
+# anyone driving the parsers from Python / WASM / custom tooling.
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 crossterm = "0.29"
+arboard = "3"
+# CLI surface.
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+# Shared serde infra — used directly by main.rs for a handful of
+# CLI-layer types.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
-clap = { version = "4", features = ["derive"] }
-clap_complete = "4"
-arboard = "3"
-prost = { version = "0.13", optional = true }
-# Opt-in semantic search (see `embedding-search` feature above). Pure-Rust
-# ONNX runtime via `ort`; default MiniLM-L6-v2 model is ~90MB on first use.
-fastembed = { version = "5", optional = true }
-# Opt-in native-OS notifications for `--live` mode's error / idle
-# detection. Platform-specific transitive deps (D-Bus on Linux, AppKit
-# on macOS, WinRT on Windows) are why this is feature-gated.
-notify-rust = { version = "4", optional = true }
-# Parallel parsing in `agx corpus <dir>`. Pulls in `rayon-core` + `crossbeam`
-# helpers (both pure-Rust, no OS-specific transitive deps). Small enough
-# to earn its place given the target use case of scanning thousands of
-# session files at once.
-rayon = "1"
 
 [dev-dependencies]
 tempfile = "3"

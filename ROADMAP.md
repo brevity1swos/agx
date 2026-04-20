@@ -1112,15 +1112,47 @@ users who never run the TUI.
 
 ### Subplans
 
-**7.1 — Workspace split**
-- [ ] Convert the repo to a Cargo workspace: `agx-core` (parsers + Step
-      model), `agx` (TUI binary depending on agx-core)
-- [ ] `agx-core` has zero TUI deps (no ratatui, no crossterm, no arboard)
-- [ ] Public API surface in agx-core: `Format`, `Step`, `StepKind`,
-      `load(path) -> Result<Vec<Step>>`, format-specific loaders for
-      direct use
-- [ ] `agx-core` publishes to crates.io independently; version-locked to
-      `agx` within a major
+**7.1 — Workspace split** ✅ (shipped 2026-04-19)
+- [x] Repo converted to a Cargo workspace. Top-level `Cargo.toml`
+      declares the `agx` bin+lib package and `crates/agx-core` as
+      the only workspace member. Both crates share MSRV 1.85,
+      edition 2024, MIT OR Apache-2.0.
+- [x] 22 pure modules moved into `crates/agx-core/src/`: annotations,
+      browser, codex, corpus, debug_unknowns, diff_align, export,
+      format, gemini, generic, langchain, loader, notify, otel_json,
+      otel_proto, pii, pricing, semantic, session, slice, timeline,
+      vercel_ai. The 3 TUI modules (`tui`, `corpus_tui`, `diff_tui`)
+      stay in the top-level `agx` crate because they depend on
+      ratatui / crossterm / arboard.
+- [x] `agx/src/lib.rs` re-exports every `agx_core::*` module so
+      existing call sites (`agx::timeline::Step`, benches'
+      `use agx::loader::load_session`, etc.) keep working without
+      any find-and-replace. The split is a publish-shape change,
+      not a public-API change.
+- [x] `corpus::run` gained a `TuiLauncher` callback parameter so
+      agx-core can delegate the `--tui` path to the bin crate's
+      `corpus_tui::run` without inverting the dependency. Library
+      consumers that don't ship a TUI pass `corpus::no_tui` (which
+      errors out if `--tui` is ever set).
+- [x] Feature flags mirror: `agx` re-exports `otel-proto`,
+      `embedding-search`, `notifications` by delegating to the
+      agx-core features of the same names. Users flip the flag on
+      either crate and get the same effect.
+- [x] agx-core has its own README.md and crates.io metadata
+      (keywords, categories, documentation, description). Ready to
+      publish — the user just has to run `cargo publish -p agx-core`.
+- [x] `fixture_path` handling: agx-core tests use `../../assets/…`
+      so they run from the subcrate's manifest dir and still find
+      the repo-root fixtures. No change needed to top-level
+      integration tests.
+- [x] 352 tests pass across the workspace (90 in agx-bin +
+      249 in agx-core + 12 integration + 1 scaffold = 352). Clippy
+      clean on default features across both crates. fmt clean.
+- [x] Binary size unchanged at ~2.6MB default — the split is
+      reorganization, not functionality delta.
+- [ ] **Deferred**: `cargo publish -p agx-core`. Waits on user
+      action (confirming a v0.1.0 crates.io name is fine) but the
+      manifest is ready.
 
 **7.2 — Python bindings**
 - [ ] `agx-py` crate using `pyo3`, ships `agx` PyPI wheel (the python

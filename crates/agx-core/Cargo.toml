@@ -1,0 +1,39 @@
+[package]
+name = "agx-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Agent-trace parsers, timeline model, cost/pricing, and corpus aggregation. The pure, TUI-free core of the agx CLI."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/brevity1swos/agx"
+documentation = "https://docs.rs/agx-core"
+keywords = ["agent", "trace", "claude", "openai", "observability"]
+categories = ["development-tools", "command-line-utilities", "parser-implementations"]
+readme = "README.md"
+
+[features]
+# Binary OTLP (.pb / .otlp) support via prost. Off by default —
+# ~500KB of transitive deps most users don't need.
+default = []
+otel-proto = ["dep:prost"]
+# Semantic search / embedding-based ranking via fastembed. Off by
+# default because the runtime pulls in `ort` (ONNX Runtime) plus a
+# ~90MB MiniLM model on first use.
+embedding-search = ["dep:fastembed"]
+# Desktop notifications via notify-rust (platform-native bindings).
+# Off by default because D-Bus / AppKit / WinRT deps vary by host.
+notifications = ["dep:notify-rust"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+# Parallel parsing in the corpus module. Pure-Rust; no OS-specific
+# transitive deps.
+rayon = "1"
+prost = { version = "0.13", optional = true }
+fastembed = { version = "5", optional = true }
+notify-rust = { version = "4", optional = true }
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,57 +1,30 @@
-//! agx — step-through debugger for AI agent traces.
+//! agx — step-through debugger CLI (TUI + binary).
 //!
-//! This crate exposes the parser, timeline, corpus, and pricing layers so
-//! the bench harness under `benches/` (and future external consumers like
-//! a Phase 7 `agx-core` split) can drive them directly. The CLI entry
-//! point lives in `src/main.rs` and consumes this library.
+//! The pure parsers, timeline model, cost tables, corpus aggregation,
+//! export writers, annotations, semantic search, PII scanner, and
+//! notifications layer live in the companion [`agx-core`](../agx_core/index.html)
+//! crate. This crate is a thin TUI + CLI wrapper around it.
 //!
-//! # Stability
+//! # Re-exports
 //!
-//! **Not a stable public API yet.** Expect breaking changes between
-//! 0.x releases. Phase 7 of the roadmap will formalize a stable subset
-//! when the library split happens.
+//! Everything public on `agx-core` is re-exported here, so existing
+//! call sites that write `agx::timeline::Step`, `agx::loader::load_session`,
+//! etc. keep working unchanged. The split is purely about publish
+//! shape (Python / WASM / eval-harness consumers want the pure core
+//! without ratatui) — not about rebinding the public surface.
 //!
-//! # Module groupings
+//! # TUI-only modules
 //!
-//! - Parsers: [`session`], [`codex`], [`gemini`], [`generic`],
-//!   [`langchain`], [`otel_json`], [`otel_proto`], [`vercel_ai`] —
-//!   each format-specific layer lands in its own module and produces
-//!   `Vec<Step>` via shared helpers from [`timeline`].
-//! - Shared model: [`timeline`] (Step / StepKind / Usage /
-//!   SessionTotals), [`pricing`], [`format`] (detection), [`loader`]
-//!   (format dispatch).
-//! - Corpus + slicing: [`corpus`], [`slice`], [`diff_align`].
-//! - Features: [`semantic`] (gated on `embedding-search`),
-//!   [`otel_proto`] (gated on `otel-proto`).
-//! - TUI + bin-only layers: [`tui`], [`browser`], [`corpus_tui`],
-//!   [`diff_tui`], [`export`], [`debug_unknowns`], [`annotations`].
-//!
-//! The TUI-family modules are exposed here rather than kept `mod`-only
-//! in the bin because they're useful for integration tests and any
-//! future tooling that wants to drive the same rendering logic.
+//! [`tui`], [`corpus_tui`], and [`diff_tui`] live here because they
+//! depend on `ratatui` + `crossterm` + `arboard`, none of which
+//! belong in `agx-core`.
 
-pub mod annotations;
-pub mod browser;
-pub mod codex;
-pub mod corpus;
+pub use agx_core::{
+    annotations, browser, codex, corpus, debug_unknowns, diff_align, export, format, gemini,
+    generic, langchain, loader, notify, otel_json, otel_proto, pii, pricing, semantic, session,
+    slice, timeline, vercel_ai,
+};
+
 pub mod corpus_tui;
-pub mod debug_unknowns;
-pub mod diff_align;
 pub mod diff_tui;
-pub mod export;
-pub mod format;
-pub mod gemini;
-pub mod generic;
-pub mod langchain;
-pub mod loader;
-pub mod notify;
-pub mod otel_json;
-pub mod otel_proto;
-pub mod pii;
-pub mod pricing;
-pub mod semantic;
-pub mod session;
-pub mod slice;
-pub mod timeline;
 pub mod tui;
-pub mod vercel_ai;

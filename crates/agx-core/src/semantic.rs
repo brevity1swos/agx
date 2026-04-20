@@ -42,7 +42,7 @@ pub(crate) const MAX_RESULTS: usize = 30;
 /// User-facing message shown when `//query` is entered but the feature is
 /// off. Mentions both the cargo install path and the build path so users
 /// can pick whichever matches their workflow.
-pub(crate) const FEATURE_DISABLED_MESSAGE: &str = "semantic search not compiled in — rebuild with `cargo install agx --features embedding-search` or `cargo build --release --features embedding-search`";
+pub const FEATURE_DISABLED_MESSAGE: &str = "semantic search not compiled in — rebuild with `cargo install agx --features embedding-search` or `cargo build --release --features embedding-search`";
 
 /// Rank steps by semantic similarity to `query`.
 ///
@@ -53,12 +53,12 @@ pub(crate) const FEATURE_DISABLED_MESSAGE: &str = "semantic search not compiled 
 /// - `None` when the feature is off. Callers should surface
 ///   `FEATURE_DISABLED_MESSAGE` in that case.
 #[cfg(not(feature = "embedding-search"))]
-pub(crate) fn rank(_query: &str, _steps: &[Step]) -> Option<Vec<usize>> {
+pub fn rank(_query: &str, _steps: &[Step]) -> Option<Vec<usize>> {
     None
 }
 
 #[cfg(feature = "embedding-search")]
-pub(crate) fn rank(query: &str, steps: &[Step]) -> Option<Vec<usize>> {
+pub fn rank(query: &str, steps: &[Step]) -> Option<Vec<usize>> {
     real::rank(query, steps)
 }
 

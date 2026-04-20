@@ -37,8 +37,11 @@ cargo audit                                          # Supply chain audit
 ## Architecture
 
 ```
+crates/
+└── agx-core/           # Pure parsers / timeline / corpus / pricing / annotations / pii / semantic / notify / export.
+                        # Zero TUI deps. Publishable standalone to crates.io for Python / WASM / eval-harness consumers.
 src/
-├── lib.rs              # Library shim re-exporting every module as `pub mod`; consumed by main.rs and benches/
+├── lib.rs              # Thin library re-exporting everything from agx-core plus the local TUI modules
 ├── main.rs             # CLI entry point: clap + format dispatch + --summary / --export / --diff branches
 ├── format.rs           # Format detection — returns ClaudeCode | Codex | Gemini | Generic | OtelJson
 ├── browser.rs          # Multi-session discovery + picker (scans ~/.claude, ~/.codex, ~/.gemini)

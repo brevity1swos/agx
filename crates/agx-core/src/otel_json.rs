@@ -468,7 +468,7 @@ mod tests {
 
     #[test]
     fn full_fixture_parses_without_error() {
-        let steps = load(Path::new("assets/sample_otel_json_traces.json")).unwrap();
+        let steps = load(Path::new("../../assets/sample_otel_json_traces.json")).unwrap();
         // Fixture: user, assistant text, tool_use, tool_result, assistant text
         assert_eq!(steps.len(), 5);
         assert_eq!(steps[0].kind, StepKind::UserText);

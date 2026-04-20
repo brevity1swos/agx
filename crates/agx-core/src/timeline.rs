@@ -442,7 +442,7 @@ pub fn build(entries: &[Entry]) -> Vec<Step> {
     steps
 }
 
-pub(crate) fn user_text_step(text: &str) -> Step {
+pub fn user_text_step(text: &str) -> Step {
     Step {
         label: format!("[user]   {}", truncate(text, LABEL_PREVIEW_WIDTH)),
         detail: text.to_string(),
@@ -451,7 +451,7 @@ pub(crate) fn user_text_step(text: &str) -> Step {
     }
 }
 
-pub(crate) fn assistant_text_step(text: &str) -> Step {
+pub fn assistant_text_step(text: &str) -> Step {
     Step {
         label: format!("[asst]   {}", truncate(text, LABEL_PREVIEW_WIDTH)),
         detail: text.to_string(),
@@ -460,7 +460,7 @@ pub(crate) fn assistant_text_step(text: &str) -> Step {
     }
 }
 
-pub(crate) fn tool_use_step(id: &str, name: &str, input_pretty: &str) -> Step {
+pub fn tool_use_step(id: &str, name: &str, input_pretty: &str) -> Step {
     Step {
         label: format!("[tool]   {} ({})", name, short_id(id)),
         detail: format!("Tool: {name}\nID: {id}\n\nInput:\n{input_pretty}"),
@@ -471,7 +471,7 @@ pub(crate) fn tool_use_step(id: &str, name: &str, input_pretty: &str) -> Step {
     }
 }
 
-pub(crate) fn tool_result_step(
+pub fn tool_result_step(
     id: &str,
     result: &str,
     tool_name: Option<&str>,
@@ -508,7 +508,7 @@ pub fn compute_durations(steps: &mut [Step]) {
 
 /// Format a duration in ms to a compact human-readable string.
 #[allow(clippy::cast_precision_loss)]
-pub(crate) fn format_duration_ms(ms: u64) -> String {
+pub fn format_duration_ms(ms: u64) -> String {
     if ms < 1_000 {
         format!("{ms}ms")
     } else if ms < 60_000 {
@@ -603,7 +603,7 @@ pub(crate) fn pretty_json<T: serde::Serialize>(value: &T) -> String {
     serde_json::to_string_pretty(value).unwrap_or_default()
 }
 
-pub(crate) fn truncate(s: &str, n: usize) -> String {
+pub fn truncate(s: &str, n: usize) -> String {
     let mut head = String::with_capacity(n);
     let mut iter = s.chars().map(|c| if c == '\n' { ' ' } else { c });
     for _ in 0..n {

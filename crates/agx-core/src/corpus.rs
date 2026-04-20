@@ -557,9 +557,27 @@ pub struct CorpusArgs {
     pub sample: Option<usize>,
 }
 
+/// Callback the CLI layer supplies when it wants to drop into the
+/// interactive corpus TUI on `--tui`. agx-core doesn't carry the TUI
+/// deps (ratatui / crossterm / arboard), so the launcher lives in the
+/// top-level `agx` crate and gets passed through here. When `args.tui`
+/// is `false`, the launcher is never invoked — callers that don't
+/// ship a TUI can pass the [`no_tui`] helper.
+pub type TuiLauncher<'a> = dyn Fn(Vec<ParsedSession>, &CorpusStats, bool) -> Result<()> + 'a;
+
+/// Default launcher for consumers without a TUI layer. Returns an
+/// error if `--tui` is ever set; callers that never set `args.tui`
+/// can pass this unconditionally.
+pub fn no_tui(_parsed: Vec<ParsedSession>, _stats: &CorpusStats, _no_cost: bool) -> Result<()> {
+    anyhow::bail!("this agx-core caller does not provide a corpus TUI implementation");
+}
+
 /// Entry point called from `main.rs::main`. Walks the directory, loads
 /// every session in parallel, applies filters, aggregates, and prints.
-pub fn run(args: &CorpusArgs) -> Result<()> {
+/// When `args.tui` is set, delegates to `tui_launcher` — the top-level
+/// agx bin crate passes its `corpus_tui::run`; library consumers that
+/// don't ship a TUI can pass [`no_tui`].
+pub fn run(args: &CorpusArgs, tui_launcher: &TuiLauncher<'_>) -> Result<()> {
     use std::time::Instant;
     let t_walk = Instant::now();
     let files = discover_files(&args.dir, args.max_depth);
@@ -624,10 +642,12 @@ pub fn run(args: &CorpusArgs) -> Result<()> {
             print_trajectory_stats_text(&tstats);
         }
     } else if args.tui {
-        // Drop into the interactive corpus TUI. When the user selects a
-        // session and hits Enter, the outer loop re-runs the TUI after
-        // the drill-in per-session TUI exits.
-        crate::corpus_tui::run(parsed, &stats, args.no_cost)?;
+        // Drop into the interactive corpus TUI via the launcher the
+        // CLI layer supplied. Keeping the launcher injectable means
+        // agx-core stays pure (no ratatui / crossterm / arboard
+        // deps) while the top-level `agx` bin provides the actual
+        // implementation.
+        tui_launcher(parsed, &stats, args.no_cost)?;
     } else if args.jsonl {
         print_jsonl(&parsed, &errors);
     } else if args.json {

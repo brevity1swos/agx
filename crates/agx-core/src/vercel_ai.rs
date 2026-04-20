@@ -261,7 +261,7 @@ mod tests {
 
     #[test]
     fn parses_fixture_end_to_end() {
-        let steps = load(Path::new("assets/sample_vercel_ai_session.json")).unwrap();
+        let steps = load(Path::new("../../assets/sample_vercel_ai_session.json")).unwrap();
         // Fixture walk: user → assistant text → tool_use → tool_result → assistant text
         assert_eq!(steps.len(), 5);
         assert_eq!(steps[0].kind, StepKind::UserText);
@@ -277,7 +277,7 @@ mod tests {
 
     #[test]
     fn first_step_usage_attaches_to_first_assistant_text() {
-        let steps = load(Path::new("assets/sample_vercel_ai_session.json")).unwrap();
+        let steps = load(Path::new("../../assets/sample_vercel_ai_session.json")).unwrap();
         // steps[1] is the first chat_model's assistant text. Step-0 usage
         // (120/45) attaches there per the shared anchor rule.
         assert_eq!(steps[1].model.as_deref(), Some("gpt-5"));
@@ -291,14 +291,14 @@ mod tests {
         // "no LLM on this step" and DO attach nothing (no double-counting,
         // no misleading zero-token row). The tool_result step itself comes
         // from steps[3] in the output, with no usage attached.
-        let steps = load(Path::new("assets/sample_vercel_ai_session.json")).unwrap();
+        let steps = load(Path::new("../../assets/sample_vercel_ai_session.json")).unwrap();
         assert_eq!(steps[3].tokens_in, None);
         assert_eq!(steps[3].tokens_out, None);
     }
 
     #[test]
     fn third_step_usage_attaches_to_final_assistant_text() {
-        let steps = load(Path::new("assets/sample_vercel_ai_session.json")).unwrap();
+        let steps = load(Path::new("../../assets/sample_vercel_ai_session.json")).unwrap();
         let last = steps.last().unwrap();
         assert_eq!(last.kind, StepKind::AssistantText);
         assert_eq!(last.tokens_in, Some(180));
