@@ -106,7 +106,12 @@ src/
 agx is the read-only middle tool in a three-tool suite — **stepwise** —
 under the `brevity1swos` GitHub org. Shared UX and integration contracts
 live in [docs/suite-conventions.md](docs/suite-conventions.md), maintained
-**verbatim** against the copies in `rgx/docs/` and `sift/docs/`. When
+**verbatim** against the copies in `rgx/docs/` and `sift/docs/`.
+[docs/agent-guide.md](docs/agent-guide.md) is the natural-language
+cookbook for AI coding assistants that operate agx on a user's behalf;
+[docs/mcp-integration.md](docs/mcp-integration.md) covers the typed
+MCP tool surface (`agx-mcp`) for agents self-introspecting their own
+session mid-run. When
 editing that file in agx, the change must also land in rgx and sift in
 the same release cycle; divergence is a smell, never a feature.
 
