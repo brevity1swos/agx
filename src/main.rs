@@ -159,6 +159,21 @@ enum Commands {
     /// aggregate stats (per-model / per-tool / per-format breakdowns,
     /// totals, and cost). Unrecognized files are silently skipped.
     Corpus(CorpusArgs),
+    /// Health-check report — agx version, default features, and
+    /// which stepwise siblings (sift, rgx, agx-mcp) are installed.
+    /// Matches `sift doctor` per docs/suite-conventions.md §2.
+    Doctor(DoctorArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct DoctorArgs {
+    /// Emit the report as JSON instead of a human-readable summary.
+    /// Shape:
+    /// `{agx: {state, version, features},
+    ///   agx_mcp / sift / rgx: {state, version?}}`
+    /// where state ∈ {"ok", "missing", "unknown"}.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(clap::Args, Debug)]
@@ -236,6 +251,108 @@ struct CorpusArgs {
 /// publishing this session?" rather than a full secrets-management
 /// tool. Exit code 0 whether or not matches are found (the dataset-
 /// prep workflow is iterative — scan, redact, re-scan).
+/// Probe a sibling tool by spawning `<tool> --version`. Returns
+/// `None` when the binary isn't on PATH or the spawn fails;
+/// returns `Some(stdout.trim().first_line())` on success. The first
+/// line convention matches every stepwise tool — their
+/// `--version` output starts with `name X.Y.Z` on line 1 and may
+/// have feature banners or build info on subsequent lines.
+fn probe_tool_version(bin: &str) -> Option<String> {
+    use std::process::Command;
+    let output = Command::new(bin).arg("--version").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let first_line = stdout.lines().next()?.trim().to_string();
+    if first_line.is_empty() {
+        None
+    } else {
+        Some(first_line)
+    }
+}
+
+/// Render the doctor report. Matches the four-state shape from
+/// `sift doctor` (sift uses `ok / too-old / unknown / missing`);
+/// agx v0.1 ships only the `ok` / `missing` / `unknown` states
+/// because the cross-tool compat table doesn't commit to version
+/// floors yet. `too-old` becomes meaningful once the table lands
+/// minimums — per docs/stability.md.
+fn run_doctor(args: &DoctorArgs) -> Result<()> {
+    // Self: we know our own version statically.
+    let agx_version = env!("CARGO_PKG_VERSION").to_string();
+    // Feature list — populated at compile time so the output reflects
+    // the actual binary's capabilities.
+    let mut features: Vec<&'static str> = Vec::new();
+    if cfg!(feature = "otel-proto") {
+        features.push("otel-proto");
+    }
+    if cfg!(feature = "embedding-search") {
+        features.push("embedding-search");
+    }
+    if cfg!(feature = "notifications") {
+        features.push("notifications");
+    }
+
+    // Siblings: agx-mcp / sift / rgx. Probed in the same order as
+    // the suite-conventions §2 table so humans scanning the output
+    // see the expected reading order.
+    let agx_mcp = probe_tool_version("agx-mcp");
+    let sift = probe_tool_version("sift");
+    let rgx = probe_tool_version("rgx");
+
+    if args.json {
+        let mut payload = serde_json::Map::new();
+        payload.insert(
+            "agx".into(),
+            serde_json::json!({
+                "state": "ok",
+                "version": agx_version,
+                "features": features,
+            }),
+        );
+        payload.insert("agx_mcp".into(), sibling_json(&agx_mcp));
+        payload.insert("sift".into(), sibling_json(&sift));
+        payload.insert("rgx".into(), sibling_json(&rgx));
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+        return Ok(());
+    }
+
+    // Text output — fixed-width label column so entries align in a
+    // terminal without reaching for a tabwriter crate.
+    println!("agx doctor\n");
+    let feat = if features.is_empty() {
+        "default".to_string()
+    } else {
+        features.join(", ")
+    };
+    println!("  {:<10} ok     ({agx_version}, features: {feat})", "agx:");
+    print_sibling("agx-mcp:", agx_mcp.as_deref());
+    print_sibling("sift:", sift.as_deref());
+    print_sibling("rgx:", rgx.as_deref());
+
+    let detected = [&agx_mcp, &sift, &rgx]
+        .iter()
+        .filter(|v| v.is_some())
+        .count();
+    println!("\nstepwise suite: {} of 3 siblings present", detected);
+    Ok(())
+}
+
+fn sibling_json(version: &Option<String>) -> serde_json::Value {
+    match version {
+        Some(v) => serde_json::json!({"state": "ok", "version": v}),
+        None => serde_json::json!({"state": "missing"}),
+    }
+}
+
+fn print_sibling(label: &str, version: Option<&str>) {
+    match version {
+        Some(v) => println!("  {:<10} ok     ({v})", label),
+        None => println!("  {:<10} missing", label),
+    }
+}
+
 fn print_pii_scan(steps: &[Step]) {
     use std::collections::BTreeMap;
     let matches = pii::scan_steps(steps);
@@ -377,6 +494,14 @@ fn main() -> Result<()> {
         let mut cmd = Cli::command();
         generate(shell, &mut cmd, "agx", &mut std::io::stdout());
         return Ok(());
+    }
+
+    // `agx doctor` is the smallest and most stateless subcommand —
+    // dispatch before corpus so a user without a session can still
+    // ask "what's installed?" without seeing any of the single-
+    // session scaffolding errors.
+    if let Some(Commands::Doctor(args)) = &cli.command {
+        return run_doctor(args);
     }
 
     // `agx corpus <dir>` subcommand takes over before the single-session

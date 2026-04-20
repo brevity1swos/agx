@@ -194,14 +194,25 @@ for machine-readable output.
 
 ### "Is agx-mcp / sift / rgx installed?"
 
-🚧 *planned — ROADMAP 8.5*
-
 ```bash
-agx doctor --json
+agx doctor          # human-readable
+agx doctor --json   # machine-parseable
 ```
 
-Reports the suite state per docs/suite-conventions.md §2. Until
-shipped, check via `which sift rgx agx-mcp` and `<tool> --version`.
+Reports per-sibling state (`ok` / `missing`) + agx's own version
+and compiled-in feature flags. Exit code is always 0 — missing
+siblings are informational. JSON shape:
+
+```json
+{
+  "agx":     {"state": "ok", "version": "0.1.0", "features": []},
+  "agx_mcp": {"state": "missing"},
+  "sift":    {"state": "ok", "version": "sift 0.1.0"},
+  "rgx":     {"state": "ok", "version": "rgx 0.12.0"}
+}
+```
+
+Matches `sift doctor` / `rgx doctor` (planned) per suite-conventions §2.
 
 ## When NOT to use agx
 

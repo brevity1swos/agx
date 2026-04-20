@@ -1310,11 +1310,17 @@ of format support that didn't fit earlier phases.
 - [ ] README + ROADMAP honest about what's in and what's out
 
 **8.5 — Stepwise suite retrofits**
-- [ ] `agx doctor` subcommand (mirroring sift's `sift doctor` from that
-      repo's Phase 1.6): probes rgx and sift on `PATH`, reports version
-      + whether each sibling's CLI surface matches the minimum-supported
-      contract from suite-conventions §5. Feature-detection, silent
-      degrade when a sibling is missing (status output, never exit 2).
+- [x] `agx doctor` subcommand (shipped 2026-04-19). Probes
+      `agx-mcp`, `sift`, `rgx` on `PATH` via `<tool> --version`,
+      reports per-sibling state (`ok` / `missing`). Self-section
+      shows agx version + feature flags (`otel-proto`,
+      `embedding-search`, `notifications` — whichever were compiled
+      in). Default text output is aligned + scannable; `--json`
+      emits the stable `{agx, agx_mcp, sift, rgx}` shape documented
+      in docs/stability.md. Exit code is always 0 — missing
+      siblings are informational, not errors. `too-old` state will
+      light up once the cross-tool compat table commits to version
+      floors.
 - [ ] Cross-tool compatibility table in README, per
       suite-conventions §7. Columns: agx version ↔ minimum sift version
       ↔ minimum rgx version. Updated on every minor release that
