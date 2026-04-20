@@ -1,0 +1,24 @@
+[package]
+name = "agx-py"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Python bindings for agx-core — load and inspect AI agent traces (Claude Code, Codex, Gemini, OTel, LangChain, Vercel AI SDK) from Python."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/brevity1swos/agx"
+readme = "README.md"
+publish = false  # ships to PyPI via maturin, not crates.io
+
+[lib]
+name = "agx"  # Python import name: `import agx`
+crate-type = ["cdylib"]
+
+[dependencies]
+# Pure agx-core — no ratatui / crossterm / arboard.
+agx-core = { path = "../agx-core" }
+# PyO3 extension API. `extension-module` means "build a Python
+# extension, not a linkable lib"; `abi3` targets a stable ABI so one
+# wheel runs on any Python ≥ 3.10.
+pyo3 = { version = "0.26", features = ["extension-module", "abi3-py310"] }
+serde = "1"
+serde_json = "1"

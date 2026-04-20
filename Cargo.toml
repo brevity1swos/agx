@@ -1,8 +1,13 @@
 [workspace]
-members = ["crates/agx-core"]
+members = ["crates/agx-core", "crates/agx-py"]
+# `default-members` keeps `cargo build` / `cargo test` at the repo
+# root touching only the main bin + agx-core. agx-py requires
+# Python headers (pyo3) and is built via maturin, not the normal
+# cargo workflow — explicit `-p agx-py` if you do want to poke at it.
 # The top-level `agx` crate is still defined below (it's the one
 # users run as `agx …`); listing it in `members` isn't needed because
 # the manifest root is implicitly a workspace member.
+default-members = [".", "crates/agx-core"]
 
 [workspace.package]
 edition = "2024"

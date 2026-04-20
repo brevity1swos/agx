@@ -1,0 +1,31 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "agx"
+description = "Python bindings for agx-core — load and inspect AI agent traces from Python."
+requires-python = ">=3.10"
+license = { text = "MIT OR Apache-2.0" }
+authors = [{ name = "brevity1swos" }]
+keywords = ["agent", "trace", "claude", "openai", "observability"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development :: Debuggers",
+]
+dynamic = ["version"]
+
+[project.urls]
+Repository = "https://github.com/brevity1swos/agx"
+
+[tool.maturin]
+# pyo3 extension module lives at agx-py/src/lib.rs; produce a single
+# `agx` native import. bindings = "pyo3" tells maturin to drive PyO3's
+# build script.
+module-name = "agx"
+bindings = "pyo3"
+features = ["pyo3/extension-module"]

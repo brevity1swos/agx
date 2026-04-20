@@ -1154,14 +1154,35 @@ users who never run the TUI.
       action (confirming a v0.1.0 crates.io name is fine) but the
       manifest is ready.
 
-**7.2 — Python bindings**
-- [ ] `agx-py` crate using `pyo3`, ships `agx` PyPI wheel (the python
-      package named `agx` or `agx_core` — resolve at publish time)
-- [ ] Surface: `agx.load(path) -> list[Step]`, `agx.load_corpus(dir) ->
-      iterator[Step]`, `Step` as a frozen dataclass
-- [ ] Wheels built via `maturin` in CI for linux-x86_64, linux-aarch64,
-      macos-arm64, windows-x86_64
-- [ ] No Python runtime requirement for the main `agx` binary
+**7.2 — Python bindings** ✅ (scaffold shipped 2026-04-19; wheels via maturin)
+- [x] `crates/agx-py/` — pyo3 extension module, builds to a `cdylib`
+      named `agx` (so `import agx` in Python). abi3-py310 target
+      means one wheel works on every Python ≥ 3.10.
+- [x] Python surface:
+      `agx.load(path) -> list[dict]` (Step-shaped dicts with stable
+      schema per docs/eval-integration.md),
+      `agx.load_corpus(dir) -> list[dict]` (per-session aggregate
+      dicts — totals, tool_stats, fork_root_count, etc.),
+      `agx.scan_pii(text) -> list[dict]` (Phase 6.4 scanner over
+      arbitrary strings).
+- [x] `agx-py` added to the workspace but excluded from
+      `default-members` — `cargo build` at repo root skips it.
+      Explicit `cargo build -p agx-py` or `maturin build` picks it
+      up. Keeps the dev loop fast and Python-toolchain-free for
+      contributors who only touch the bin crate.
+- [x] `pyproject.toml` configured for maturin. One-command build:
+      `cd crates/agx-py && maturin build --release`. CI matrix for
+      cross-platform wheels is future work (see 7.4).
+- [x] Main `agx` binary has zero Python runtime requirement.
+      Confirmed: `cargo build` default-members doesn't touch
+      anything in agx-py's dep tree.
+- [ ] **Deferred**: CI wheels for linux-x86_64 / linux-aarch64 /
+      macos-arm64 / windows-x86_64. Needs a new GitHub Actions
+      matrix workflow — separate commit when ready to publish.
+- [ ] **Deferred**: `Step` as a frozen `dataclass` instead of a raw
+      dict. Current dict shape maps 1:1 to the stable JSON schema,
+      which keeps the bridge honest. Promote to dataclass if users
+      surface the ergonomics ask.
 
 **7.3 — TypeScript / WASM bindings**
 - [ ] `agx-wasm` crate via `wasm-bindgen`, published as `@agx/core` (or
