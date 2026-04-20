@@ -88,7 +88,12 @@ impl Filter {
 /// Result of parsing a single session file. Either a successful parse
 /// with its derived aggregates, or a format-drift error we want to
 /// surface in the corpus summary.
-#[derive(Debug)]
+///
+/// `Serialize` so downstream bindings (`agx-py`, `agx-wasm`) can
+/// round-trip the full struct through `serde_json::to_value` without
+/// hand-rolling field extraction — keeps the Python / JS surfaces
+/// honest against any new field added here.
+#[derive(Debug, Serialize)]
 pub struct ParsedSession {
     pub path: PathBuf,
     pub format: Format,

@@ -184,6 +184,12 @@ pub struct StepCounts {
 // Codex, and Gemini error outputs. Conservative — prefers false negatives
 // over false positives so users can trust the red marker.
 pub fn is_error_result(step: &Step) -> bool {
+    // Substring indicators that are safe to match without a word
+    // boundary — all distinctive enough that false positives are
+    // very rare. Exit-code matching lives below in
+    // `haystack_has_nonzero_exit_code` because "exit code 1" as a
+    // substring matches "exit code 127", "exit code 255", etc., and
+    // "exit code 10" is a clean completion code in some tools.
     const INDICATORS: &[&str] = &[
         "\"error\"",
         "error:",
@@ -195,17 +201,6 @@ pub fn is_error_result(step: &Step) -> bool {
         "no such file",
         "permission denied",
         "command failed",
-        "exit code 1",
-        "exit code 2",
-        "exit code 3",
-        "exit code 4",
-        "exit code 5",
-        "exit code 6",
-        "exit code 7",
-        "exit code 8",
-        "exit code 9",
-        "process exited with code 1",
-        "process exited with code 2",
     ];
     if step.kind != StepKind::ToolResult {
         return false;
@@ -216,7 +211,36 @@ pub fn is_error_result(step: &Step) -> bool {
         .nth(1)
         .unwrap_or(&step.detail)
         .to_lowercase();
-    INDICATORS.iter().any(|kw| haystack.contains(kw))
+    INDICATORS.iter().any(|kw| haystack.contains(kw)) || haystack_has_nonzero_exit_code(&haystack)
+}
+
+/// Scan a lowercased haystack for `exit code <N>` / `process exited
+/// with code <N>` markers where `<N>` is a non-zero integer. Parses
+/// the digits cleanly instead of prefix-matching so `exit code 127`
+/// counts as an error (which it is) without `exit code 10` being
+/// confused for `exit code 1`.
+fn haystack_has_nonzero_exit_code(haystack: &str) -> bool {
+    const MARKERS: &[&str] = &["exit code ", "process exited with code "];
+    for marker in MARKERS {
+        let mut rest = haystack;
+        while let Some(idx) = rest.find(marker) {
+            let after = &rest[idx + marker.len()..];
+            // Greedy digit span — stops at any non-digit byte.
+            let digit_end = after
+                .as_bytes()
+                .iter()
+                .position(|b| !b.is_ascii_digit())
+                .unwrap_or(after.len());
+            if digit_end > 0
+                && let Ok(code) = after[..digit_end].parse::<u32>()
+                && code != 0
+            {
+                return true;
+            }
+            rest = &after[digit_end..];
+        }
+    }
+    false
 }
 
 pub fn count_from_steps(steps: &[Step]) -> StepCounts {
@@ -232,7 +256,7 @@ pub fn count_from_steps(steps: &[Step]) -> StepCounts {
     c
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct ToolStats {
     pub name: String,
     pub use_count: usize,
@@ -1140,8 +1164,38 @@ mod tests {
     #[test]
     fn is_error_result_detects_exit_code_nonzero() {
         let step = result_step_with_body("Process exited with code 127");
-        // Not in our list — we check 1-9 and 1-2 for process exited
-        // For "exit code 127" the substring "exit code 1" matches, so it's detected
+        // 127 is parsed as a non-zero integer by
+        // `haystack_has_nonzero_exit_code`.
+        assert!(is_error_result(&step));
+    }
+
+    #[test]
+    fn is_error_result_ignores_exit_code_zero() {
+        // Exit code 0 is a clean completion — not an error. Previous
+        // substring-based matching didn't have this case; the
+        // integer parser rejects 0 cleanly.
+        let step = result_step_with_body("Process exited with code 0\nAll tests passed.");
+        assert!(!is_error_result(&step));
+    }
+
+    #[test]
+    fn is_error_result_detects_two_digit_exit_codes() {
+        // Earlier prefix matching treated `exit code 10` as a
+        // substring of `exit code 1`. With the integer parser, 10 is
+        // its own non-zero value — still an error (consistent
+        // behavior), but not via prefix coincidence.
+        let step = result_step_with_body("Bash exited with exit code 10");
+        assert!(is_error_result(&step));
+    }
+
+    #[test]
+    fn is_error_result_finds_embedded_exit_code_after_verbose_output() {
+        // Regression: the scan must find the marker even when it's
+        // preceded by arbitrary non-error output, not only at the
+        // start of the haystack.
+        let step = result_step_with_body(
+            "running 3 tests\ntest a ... ok\nok\nshell exited with exit code 42",
+        );
         assert!(is_error_result(&step));
     }
 

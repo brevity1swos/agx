@@ -39,9 +39,7 @@
 //! bytes and a filename hint — same shape as the rest of the agx-core
 //! parse path, just skipping the outer `fs::read`.
 
-use agx_core::format::{self, Format};
 use agx_core::timeline::Step;
-use std::io::Write as _;
 use wasm_bindgen::prelude::*;
 
 /// Call once from JS before using the other exports. Installs a
@@ -110,52 +108,39 @@ pub fn version() -> String {
 
 // ---------- internal ----------
 
-/// Detect format + parse from an in-memory buffer. Loader-like
-/// dispatch, but skips the `fs::read` step since the host already
-/// handed us the bytes.
+/// Detect format + parse from an in-memory buffer. On native targets
+/// this goes through a secure tempfile (`tempfile::NamedTempFile` —
+/// O_EXCL creation, random name, auto-cleanup on Drop). On wasm32
+/// targets the filesystem isn't available, so we return a clear
+/// error directing the caller at the out-of-band workflow.
+///
+/// The native path is primarily used for `cargo test` and
+/// `cargo check` of this crate; real browser / Node usage hits the
+/// wasm32 branch. A follow-up will add a bytes-first parser entry
+/// point in `agx-core::loader` so the wasm32 branch can actually
+/// parse instead of erroring.
+#[cfg(not(target_arch = "wasm32"))]
 fn load_from_bytes(bytes: &[u8]) -> anyhow::Result<Vec<Step>> {
-    // Write to a tempfile so we can reuse the existing loader
-    // dispatch verbatim. On wasm32-unknown-unknown there's no
-    // writable temp dir; callers targeting that should patch
-    // loader to accept &[u8] directly as a Phase 7.3 follow-up.
-    // For `cargo check` on native targets this path compiles and
-    // works; wasm builds that exercise it will fail at runtime.
-    let mut tmp = tempfile_like()?;
-    tmp.file.write_all(bytes)?;
-    tmp.file.flush()?;
-    agx_core::loader::load_session(&tmp.path)
+    use std::io::Write as _;
+    let mut tmp = tempfile::NamedTempFile::new()?;
+    tmp.write_all(bytes)?;
+    tmp.flush()?;
+    // `NamedTempFile::path` gives us a stable path for the loader;
+    // the file is removed automatically when `tmp` drops (including
+    // on error paths).
+    agx_core::loader::load_session(tmp.path())
 }
 
-/// Hand-rolled "tempfile" that works on native targets. Doesn't
-/// depend on the `tempfile` crate (one fewer dep, and `tempfile`
-/// doesn't support wasm32). For wasm32, callers should route through
-/// a host-provided FS shim.
-struct TempFile {
-    file: std::fs::File,
-    path: std::path::PathBuf,
-}
-
-fn tempfile_like() -> anyhow::Result<TempFile> {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    // Lightweight per-process uniqueness — std::process::id plus
-    // a nanosecond tick gets us collision-free within one wasm
-    // runtime instance.
-    let path = std::env::temp_dir().join(format!("agx-wasm-{}-{}.tmp", std::process::id(), nanos));
-    let file = std::fs::File::create(&path)?;
-    Ok(TempFile { file, path })
-}
-
-// Unused import on wasm32 builds — let the compiler tree-shake.
-#[allow(dead_code)]
-fn _format_is_referenced() -> Format {
-    Format::ClaudeCode
-}
-
-#[allow(dead_code)]
-fn _detect_is_referenced(path: &std::path::Path) -> anyhow::Result<Format> {
-    format::detect(path)
+#[cfg(target_arch = "wasm32")]
+fn load_from_bytes(_bytes: &[u8]) -> anyhow::Result<Vec<Step>> {
+    // wasm32-unknown-unknown has no writable filesystem, and
+    // agx-core's parsers currently expect a path. Tracked as the
+    // 7.3 follow-up: add `agx_core::loader::load_bytes(&[u8])` with
+    // bytes-first parser entry points, then route this call into
+    // it. Until then, this target returns a clear error instead of
+    // silently panicking inside a `std::fs::create` call.
+    anyhow::bail!(
+        "agx-wasm on wasm32 does not yet support `load(bytes)` — the parsers need a filesystem path. \
+         Use `scan_pii` / `version` for now, or drive agx via its CLI / MCP server."
+    )
 }

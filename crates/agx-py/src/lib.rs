@@ -108,13 +108,15 @@ fn load(py: Python<'_>, path: &str) -> PyResult<Py<PyAny>> {
 
 /// Scan a directory of sessions and return one dict per session.
 /// Parses in parallel via rayon; non-session files are silently
-/// skipped. Files that LOOK like sessions but fail to parse come back
-/// at the end as `{path, error}` dicts so downstream code can
+/// skipped. Files that LOOK like sessions but fail to parse come
+/// back at the end as `{path, error}` dicts so downstream code can
 /// distinguish "not a session" from "bad session."
 ///
-/// Per-session dict shape:
-/// `{path, format, step_count, totals: {tokens_in, tokens_out, …},
-///   annotation_count, fork_root_count, mtime_secs, tool_stats: [{name, use_count, error_count}…]}`.
+/// Per-session dict shape matches the Rust `ParsedSession` struct
+/// (serialized through serde_json), so every field added to
+/// `ParsedSession` automatically appears here. See
+/// `docs/eval-integration.md` / `ParsedSession` for the field
+/// reference.
 ///
 /// Steps aren't included here to keep corpus scans cheap; call
 /// `agx.load(path)` per session when you actually need the steps.
@@ -124,32 +126,11 @@ fn load_corpus(py: Python<'_>, dir: &str) -> PyResult<Py<PyAny>> {
     let (parsed, errors) = agx_core::corpus::load_parallel(&paths);
     let out = PyList::empty(py);
     for session in &parsed {
-        let d = PyDict::new(py);
-        d.set_item("path", session.path.display().to_string())?;
-        d.set_item("format", session.format.to_string())?;
-        d.set_item("step_count", session.step_count)?;
-        d.set_item("annotation_count", session.annotation_count)?;
-        d.set_item("fork_root_count", session.fork_root_count)?;
-        d.set_item("mtime_secs", session.mtime_secs)?;
-        let totals = PyDict::new(py);
-        totals.set_item("tokens_in", session.totals.tokens_in)?;
-        totals.set_item("tokens_out", session.totals.tokens_out)?;
-        totals.set_item("cache_read", session.totals.cache_read)?;
-        totals.set_item("cache_create", session.totals.cache_create)?;
-        totals.set_item("cost_usd", session.totals.cost_usd)?;
-        totals.set_item("unique_models", session.totals.unique_models.clone())?;
-        d.set_item("totals", totals)?;
-        let tools = PyList::empty(py);
-        for t in &session.tool_stats {
-            let td = PyDict::new(py);
-            td.set_item("name", t.name.clone())?;
-            td.set_item("use_count", t.use_count)?;
-            td.set_item("result_count", t.result_count)?;
-            td.set_item("error_count", t.error_count)?;
-            tools.append(td)?;
-        }
-        d.set_item("tool_stats", tools)?;
-        out.append(d)?;
+        // Round-trip through serde_json::to_value so the dict keeps
+        // parity with Rust-side `ParsedSession`. Schema-drift risk
+        // now lives on one type, not on both sides of the bridge.
+        let py_session = serialize_to_py(py, session)?;
+        out.append(py_session)?;
     }
     for err in &errors {
         let tup = PyDict::new(py);

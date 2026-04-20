@@ -9,7 +9,8 @@ use std::path::Path;
 /// pattern matches must include a wildcard arm; internal matches
 /// stay exhaustive. See `docs/stability.md` for the full
 /// versioning policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Format {
     ClaudeCode,

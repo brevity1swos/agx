@@ -34,6 +34,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
+use std::sync::OnceLock;
+use std::time::SystemTime;
+
+use agx_core::timeline::Step;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -190,13 +194,53 @@ fn handle_tools_call(id: Value, params: Value, session: &std::path::Path) -> Res
     }
 }
 
+/// Parse-once cache. MCP clients commonly fire 2–6 tool calls in
+/// quick succession (summary → errors → distribution → scan_pii →
+/// search …); re-parsing a 5 MB JSONL each time would make the
+/// agent-side latency scale linearly with call count for no reason.
+/// The cache is keyed on `(session_path, mtime)` so re-parsing
+/// kicks in automatically when the session grows (the common case
+/// during a live Claude Code run).
+struct StepCache {
+    mtime: SystemTime,
+    steps: Vec<Step>,
+}
+static CACHE: OnceLock<std::sync::Mutex<Option<StepCache>>> = OnceLock::new();
+
+fn load_cached(session: &std::path::Path) -> Result<Vec<Step>> {
+    let current_mtime = std::fs::metadata(session)
+        .with_context(|| format!("stat {}", session.display()))?
+        .modified()
+        .unwrap_or(SystemTime::UNIX_EPOCH);
+    let cell = CACHE.get_or_init(|| std::sync::Mutex::new(None));
+    {
+        let guard = cell.lock().expect("cache mutex poisoned");
+        if let Some(cache) = guard.as_ref()
+            && cache.mtime == current_mtime
+        {
+            return Ok(cache.steps.clone());
+        }
+    }
+    // Cache miss — parse and install. Hold the lock only while
+    // updating the cell; the parse happens without the lock so a
+    // slow parse doesn't stall a concurrent reader.
+    let steps = agx_core::loader::load_session(session)
+        .with_context(|| format!("loading session {}", session.display()))?;
+    if let Ok(mut guard) = cell.lock() {
+        *guard = Some(StepCache {
+            mtime: current_mtime,
+            steps: steps.clone(),
+        });
+    }
+    Ok(steps)
+}
+
 /// Dispatch for a named tool. Each returns a JSON-stringified result
 /// that the agent parses on its side. Rendering policy intentionally
 /// leaves formatting decisions to the caller — the server only
 /// produces structured data.
 fn run_tool(name: &str, args: &Value, session: &std::path::Path) -> Result<String> {
-    let steps = agx_core::loader::load_session(session)
-        .with_context(|| format!("loading session {}", session.display()))?;
+    let steps = load_cached(session)?;
     match name {
         "agx_session_summary" => {
             let totals = agx_core::timeline::compute_session_totals(&steps);
