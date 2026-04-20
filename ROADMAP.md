@@ -1184,13 +1184,37 @@ users who never run the TUI.
       which keeps the bridge honest. Promote to dataclass if users
       surface the ergonomics ask.
 
-**7.3 — TypeScript / WASM bindings**
-- [ ] `agx-wasm` crate via `wasm-bindgen`, published as `@agx/core` (or
-      similar) on npm
-- [ ] Surface matches Python: `load(buffer) -> Step[]`, `loadCorpus` accepts
-      an async iterable of `{name, buffer}`
-- [ ] Primary use case: browser-based dashboards (agx's hosted siblings)
-      reusing agx parsers without a Rust build
+**7.3 — TypeScript / WASM bindings** ✅ (scaffold shipped 2026-04-19)
+- [x] `crates/agx-wasm/` — wasm-bindgen extension. `crate-type =
+      ["cdylib", "rlib"]` so `cargo check` works on native targets
+      for local hacking and `wasm-pack build --target web|nodejs|bundler`
+      produces the JS glue + TypeScript .d.ts files.
+- [x] JS surface matches the Python shape (contract symmetry):
+      `load(filename, bytes) -> Step[]`,
+      `scan_pii(text) -> Match[]`,
+      `version() -> string`. Every returned object is the same
+      shape as the CLI's `--export json` and the Python dicts.
+- [x] Bytes-in API (not paths). Browsers / Node / Deno pass in
+      `Uint8Array` from whatever I/O source they own — no wasi
+      filesystem shim needed. This matches the Phase 7.2 "host
+      owns I/O" pattern.
+- [x] `console_error_panic_hook` feature (default on) surfaces
+      Rust panics to the browser console. `init()` is a
+      `#[wasm_bindgen(start)]` hook so JS just imports and the
+      panic-routing install happens implicitly.
+- [x] Added to workspace but excluded from `default-members` —
+      same as agx-py. `cargo build` at repo root skips it. Explicit
+      `cargo build -p agx-wasm` or `wasm-pack build` to use it.
+- [x] serde-wasm-bindgen converts agx-core serde types to JS
+      objects in one hop, keeping the bridge schema honest
+      (same keys the Rust JSON export shows).
+- [ ] **Deferred**: CI wheels (wasm-pack publish → npm) for
+      consistent cross-platform distribution. Separate commit with
+      the Phase 7.4 CI matrix.
+- [ ] **Deferred**: `load_corpus` over an async iterable of
+      `{name, bytes}`. Wasm-bindgen doesn't natively support
+      async iterables cleanly yet — land when the ergonomics
+      story is clearer, or when concrete demand surfaces.
 
 **7.4 — Stability commitments**
 - [ ] `agx-core` public API follows SemVer from v0.8.0

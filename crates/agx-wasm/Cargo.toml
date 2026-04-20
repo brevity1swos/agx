@@ -1,0 +1,37 @@
+[package]
+name = "agx-wasm"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "WebAssembly / TypeScript bindings for agx-core — load and inspect AI agent traces from browsers and Node."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/brevity1swos/agx"
+readme = "README.md"
+publish = false  # ships to npm via wasm-pack, not crates.io
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+agx-core = { path = "../agx-core" }
+# wasm-bindgen generates JS glue from Rust functions annotated with
+# `#[wasm_bindgen]`. `rlib` above means cargo on native targets still
+# produces a plain library (for `cargo check -p agx-wasm`); the
+# browser / Node bindings come from the `cdylib` on
+# `--target wasm32-unknown-unknown`.
+wasm-bindgen = "0.2"
+# serde-wasm-bindgen plumbs serde values through wasm-bindgen, so
+# we can go directly from `agx_core` types (that already derive
+# Serialize) to JS objects with the same field shape as the Rust JSON
+# export. One contract, honored across CLI + Python + JS.
+serde-wasm-bindgen = "0.6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+
+# Better panic messages in the browser console when a Rust panic
+# crosses the boundary. Pulled in via an init function below.
+console_error_panic_hook = { version = "0.1", optional = true }
+
+[features]
+default = ["console_error_panic_hook"]
