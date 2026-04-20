@@ -153,8 +153,15 @@ pub(crate) fn attach_usage_to_first(
     }
 }
 
+/// Kind-of-step tag. Pattern-match on this to decide how to render.
+///
+/// `#[non_exhaustive]` signals that new variants will land when new
+/// step types surface (e.g. MCP resource reads per Phase 5.2).
+/// External consumers' match arms must include a wildcard; internal
+/// matches stay exhaustive. See `docs/stability.md`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum StepKind {
     #[default]
     UserText,

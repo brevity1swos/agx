@@ -2,7 +2,15 @@ use anyhow::{Context, Result, anyhow};
 use std::fmt;
 use std::path::Path;
 
+/// A recognized session format.
+///
+/// `#[non_exhaustive]` signals that new variants will land as new
+/// parsers ship (e.g. LlamaIndex, Pydantic AI). External
+/// pattern matches must include a wildcard arm; internal matches
+/// stay exhaustive. See `docs/stability.md` for the full
+/// versioning policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Format {
     ClaudeCode,
     Codex,

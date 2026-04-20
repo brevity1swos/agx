@@ -1216,12 +1216,30 @@ users who never run the TUI.
       async iterables cleanly yet — land when the ergonomics
       story is clearer, or when concrete demand surfaces.
 
-**7.4 — Stability commitments**
-- [ ] `agx-core` public API follows SemVer from v0.8.0
-- [ ] `Step` JSON schema from Phase 1.4 is the wire format between the
-      binary and any out-of-process consumer
-- [ ] Breaking changes require a deprecation cycle documented in
-      CHANGELOG.md
+**7.4 — Stability commitments** ✅ (doc shipped 2026-04-19; CI matrix deferred to 7.4b)
+- [x] [docs/stability.md](docs/stability.md) formalizes the full
+      contract: SemVer rules, cross-tool compat table semantics,
+      JSON schema stability (field names / types / enum values
+      additive-only), `agx-core` Rust API rules, feature-flag
+      stability, Python/WASM surface rules, and deprecation policy.
+- [x] `Step` JSON schema is the wire format across CLI / Python /
+      WASM. Documented in [docs/eval-integration.md](docs/eval-integration.md)
+      with the field reference and cross-tool schema-drift reporting
+      process. Covered by the Phase 6.1 `--export trajectory-openai`
+      contract and the Phase 6.3 adapter recipes.
+- [x] CHANGELOG.md gets an `[Unreleased]` section summarizing every
+      Phase 5 / 6 / 7 addition. Points at `docs/stability.md` from
+      the top-of-file header so release managers see the contract
+      on every update.
+- [x] `Format` and `StepKind` enums gain `#[non_exhaustive]` so
+      future variants don't force a MAJOR bump. External callers
+      that exhaustively match now need a wildcard arm; internal
+      matches stay exhaustive.
+- [ ] **Deferred (7.4b)**: GitHub Actions matrix for wheel / WASM
+      publishing — linux-x86_64 / linux-aarch64 / macos-arm64 /
+      windows-x86_64 for Python (maturin), web / nodejs / bundler
+      for WASM (wasm-pack). Triggers on tag push. Separate commit
+      once `cargo publish -p agx-core` runs.
 
 **Acceptance:** `pip install agx && python -c "import agx; print(len(agx.load('session.jsonl')))"`
 works on Linux, macOS, and Windows. `npm install @agx/core` exposes the

@@ -915,11 +915,17 @@ fn compute_bg_flags(steps: &[Step]) -> Vec<bool> {
 }
 
 fn kind_color(kind: StepKind) -> Color {
+    // StepKind is `#[non_exhaustive]` per docs/stability.md — new
+    // variants (e.g. MCP resource reads from Phase 5.2) will fall
+    // through the wildcard and render in white until we add an
+    // explicit arm. That's the right default: visible but not
+    // mis-categorized.
     match kind {
         StepKind::UserText => Color::Cyan,
         StepKind::AssistantText => Color::Green,
         StepKind::ToolUse => Color::Yellow,
         StepKind::ToolResult => Color::Magenta,
+        _ => Color::White,
     }
 }
 
@@ -1257,7 +1263,9 @@ fn run_loop(
                 Some(StepKind::AssistantText) => " assistant ",
                 Some(StepKind::ToolUse) => " tool_use ",
                 Some(StepKind::ToolResult) => " tool_result ",
-                None => " detail ",
+                // Future `#[non_exhaustive]` variant — fall back to
+                // the generic title until an explicit arm lands.
+                Some(_) | None => " detail ",
             };
 
             let detail_widget = Paragraph::new(detail_text)
