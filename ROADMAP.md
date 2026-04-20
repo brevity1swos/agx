@@ -1260,11 +1260,21 @@ users who never run the TUI.
       future variants don't force a MAJOR bump. External callers
       that exhaustively match now need a wildcard arm; internal
       matches stay exhaustive.
-- [ ] **Deferred (7.4b)**: GitHub Actions matrix for wheel / WASM
-      publishing — linux-x86_64 / linux-aarch64 / macos-arm64 /
-      windows-x86_64 for Python (maturin), web / nodejs / bundler
-      for WASM (wasm-pack). Triggers on tag push. Separate commit
-      once `cargo publish -p agx-core` runs.
+- [x] **Phase 7.4b** — GitHub Actions matrix for wheel / WASM
+      publishing (shipped 2026-04-20). Two workflows at
+      `.github/workflows/`:
+      - `python-wheels.yml` builds Python wheels across
+        linux-x86_64 / linux-aarch64 / macos-arm64 /
+        windows-x86_64 + an sdist, uploads each as an artifact, and
+        publishes to PyPI on `refs/tags/v*` via maturin-action.
+      - `wasm-packages.yml` builds web / nodejs / bundler WASM
+        outputs and publishes the bundler variant to npm on tag
+        push.
+      Both support `workflow_dispatch` for spot-checks without
+      tagging. Security-reviewed — no untrusted `github.event.*`
+      consumption in `run:`; `secrets.*` threads via `env:` only.
+      Secrets required: `PYPI_API_TOKEN` (pypi env), `NPM_TOKEN`
+      (npm env).
 
 **Acceptance:** `pip install agx && python -c "import agx; print(len(agx.load('session.jsonl')))"`
 works on Linux, macOS, and Windows. `npm install @agx/core` exposes the

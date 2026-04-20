@@ -1,0 +1,67 @@
+# WASM packages for agx-wasm, published to npm on tag push.
+#
+# Three targets (web / nodejs / bundler) each produce a separate
+# `pkg/` directory. The `bundler` variant is published as the
+# canonical npm package; `web` and `nodejs` ship as artifacts.
+#
+# Security review: no untrusted `github.event.*` input is consumed
+# in `run:` commands. `matrix.target` is a static string from this
+# file. `secrets.NPM_TOKEN` threads through `env:` into npm, which
+# is the documented safe pattern.
+
+name: wasm-packages
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [web, nodejs, bundler]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Build WASM package
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          cd crates/agx-wasm
+          wasm-pack build --target "$TARGET" --release --out-dir "pkg-$TARGET"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agx-wasm-${{ matrix.target }}
+          path: crates/agx-wasm/pkg-${{ matrix.target }}
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    needs: [build]
+    environment: npm
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: agx-wasm-bundler
+          path: pkg
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Publish to npm
+        working-directory: pkg
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
