@@ -40,6 +40,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "agx-mcp"
+version = "0.1.0"
+dependencies = [
+ "agx-core",
+ "anyhow",
+ "clap",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "agx-py"
 version = "0.1.0"
 dependencies = [
