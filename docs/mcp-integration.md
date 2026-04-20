@@ -42,6 +42,7 @@ All tools operate on the session file passed to `agx-mcp
 | `agx_tool_distribution`   | Stuck detection: "am I calling Read in a circle?"                         |
 | `agx_scan_pii`            | Pre-commit guardrail: "is there a secret in my recent output?"            |
 | `agx_search`              | Memory: "did I already look at this file earlier?"                        |
+| `agx_list_annotations`    | Human → agent messaging: read notes the user left with `a` in the TUI.    |
 
 Every tool returns JSON strings the agent can parse. Schemas match
 `docs/eval-integration.md` field names (Step, PII Match, etc.)

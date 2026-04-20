@@ -142,6 +142,11 @@ fn tool_list() -> Value {
                 },
                 "required": ["query"]
             }
+        },
+        {
+            "name": "agx_list_annotations",
+            "description": "List every annotation the human has written on steps in the current session. Returns {step_index, text, created_at_ms, updated_at_ms} per note. This is the human → agent messaging channel — users press `a` in the agx TUI to leave guidance ('this assumption is wrong', 'revisit after you finish X'); agents call this to pick that guidance up across turns / sessions.",
+            "inputSchema": {"type": "object", "properties": {}, "required": []}
         }
     ])
 }
@@ -278,6 +283,25 @@ fn run_tool(name: &str, args: &Value, session: &std::path::Path) -> Result<Strin
                 })
                 .collect();
             Ok(serde_json::to_string(&matches)?)
+        }
+        "agx_list_annotations" => {
+            // Load notes via the same sidecar the TUI uses. Fault-
+            // tolerant: a missing file returns an empty set
+            // (Annotations::load_for handles the missing case by
+            // constructing a fresh empty annotations struct).
+            let anns = agx_core::annotations::Annotations::load_for(session);
+            let notes: Vec<_> = anns
+                .iter()
+                .map(|(idx, note)| {
+                    json!({
+                        "step_index": idx,
+                        "text": note.text,
+                        "created_at_ms": note.created_at_ms,
+                        "updated_at_ms": note.updated_at_ms,
+                    })
+                })
+                .collect();
+            Ok(serde_json::to_string(&notes)?)
         }
         other => anyhow::bail!("unknown tool `{other}`"),
     }

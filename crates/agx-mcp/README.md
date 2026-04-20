@@ -32,6 +32,7 @@ with (passed via `--session`). No arguments except where noted.
 | `agx_tool_distribution`   | Per-tool use_count + error_count, sorted desc                             |
 | `agx_scan_pii`            | All PII/credential matches across the session (category, step, snippet)   |
 | `agx_search`              | Substring search over labels + details (step_index, label, preview)       |
+| `agx_list_annotations`    | Human → agent messaging: notes the user left via `a` in the TUI           |
 
 ## Install
 
