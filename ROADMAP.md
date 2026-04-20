@@ -1298,22 +1298,31 @@ of format support that didn't fit earlier phases.
 
 ### Subplans
 
-**8.1 — Long-tail CLI parsers**
-- [ ] **Aider** — `.aider.chat.history.md` parser (`src/aider.rs`), markdown
-      with `####` turn headers + fenced tool I/O
-- [ ] **Cline / Roo Code** — VS Code extension JSON under
-      `~/Library/Application Support/Code/User/globalStorage/...` /
-      XDG equivalent on Linux / APPDATA on Windows
-- [ ] **Cursor** — reverse-engineer storage; if hostile (encrypted SQLite),
-      fall back to Cursor's "Export Chat" JSON only
-- [ ] **Windsurf**, **Zed Assistant** — evaluate and pick up if formats have
-      stabilized and users have asked
-- [ ] **OpenClaw** — TypeScript monorepo; parse `sessions_history` export
-      if it's JSON/JSONL, otherwise request an export flag upstream
-- [ ] **Hermes Agent (Nous Research)** — Python agent with SQLite FTS5 +
-      Markdown persistence; evaluate whether to ship a SQLite feature
-      flag here or keep pushing exports
-- [ ] Drop / deprecate any parser whose CLI has died
+**8.1 — Long-tail CLI parsers** (contributor-guide shipped 2026-04-20; parsers land as contributors step up)
+- [x] [docs/adding-a-parser.md](docs/adding-a-parser.md) — 12-step
+      checklist for writing a new format parser. Covers the
+      discovery, wiring, drift-scanner, test, and docs steps every
+      existing parser follows. Audience: external contributors who
+      want to add support for Aider, Windsurf, Zed Assistant,
+      Cline, Cursor, OpenClaw, Hermes.
+- [x] "Known formats waiting for a parser" section in the same
+      doc catalogs each candidate with storage location, on-disk
+      shape, known challenges, and "when NOT to add" criteria. A
+      contributor can start an Aider or Windsurf parser from the
+      doc alone.
+- [ ] **Aider** — shape identified (`.aider.llm.history` JSONL
+      preferred over `.aider.chat.history.md` Markdown). Awaiting
+      real-world sample files from a contributor to verify
+      detection signals and schema stability.
+- [ ] **Windsurf** — hosted-by-default; on-disk schema unstable.
+      Revisit when upstream commits to a writeable local format.
+- [ ] **Zed Assistant** — SQLite. Would need `rusqlite` behind a
+      feature flag (pattern mirrors `otel-proto`). ~1-week design
+      pass before shipping.
+- [ ] **Cline / Cursor / Continue / OpenClaw / Hermes** — covered
+      by the contributor guide; ship as user demand + sample files
+      arrive.
+- [ ] Drop / deprecate any parser whose CLI has died.
 
 **8.2 — Format drift CI**
 - [ ] Monthly GitHub Action: scans release notes of Claude Code, Codex CLI,
