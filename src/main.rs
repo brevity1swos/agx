@@ -146,6 +146,22 @@ struct Cli {
     #[arg(long, value_name = "DURATION", requires = "live")]
     notify_on_idle: Option<String>,
 
+    /// Phase 5.4 — announces intent to use the experimental
+    /// tool-call replay feature. Without this flag, `R` in the TUI
+    /// is inert. Gated on top of this per-backend flags
+    /// (`--allow-shell-replay` for Bash). Even with both flags,
+    /// every replay still requires a `y` confirm in the TUI.
+    #[arg(long, hide = true)]
+    experimental_replay: bool,
+
+    /// Phase 5.4 — allow shell-backend replays. Requires
+    /// `--experimental-replay`. When set, `R` on a Bash tool_use
+    /// step spawns `/bin/sh -c "<command>"` (with per-invocation
+    /// confirm). Output appends to `<session>.replay.log` as JSONL;
+    /// the original session file is never modified.
+    #[arg(long, hide = true, requires = "experimental_replay")]
+    allow_shell_replay: bool,
+
     /// Optional subcommand. When present, overrides the single-session
     /// flow. Today only `corpus` exists — it aggregates stats across
     /// every session file in a directory tree.
@@ -726,6 +742,11 @@ fn main() -> Result<()> {
         on_idle_ms: notify_idle_ms,
     };
 
+    let replay_cfg = agx::replay::ReplayConfig {
+        enabled: cli.experimental_replay,
+        allow_shell: cli.allow_shell_replay,
+    };
+
     tui::run(
         steps,
         reload_fn.as_deref(),
@@ -733,6 +754,7 @@ fn main() -> Result<()> {
         Some(&session_path),
         cli.jump_to,
         notify_cfg,
+        replay_cfg,
     )?;
     Ok(())
 }

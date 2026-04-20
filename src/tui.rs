@@ -976,6 +976,7 @@ pub fn run(
     session_path: Option<&std::path::Path>,
     initial_step: Option<usize>,
     notify: NotifyConfig,
+    replay: crate::replay::ReplayConfig,
 ) -> Result<()> {
     enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
@@ -1000,7 +1001,14 @@ pub fn run(
         app.apply_initial_step(n);
     }
 
-    let result = run_loop(&mut terminal, &mut app, reload_fn, notify);
+    let result = run_loop(
+        &mut terminal,
+        &mut app,
+        reload_fn,
+        notify,
+        replay,
+        session_path,
+    );
     let _ = terminal.show_cursor();
     result
 }
@@ -1013,6 +1021,8 @@ fn run_loop(
     app: &mut App,
     reload_fn: Option<&dyn Fn() -> Result<Vec<Step>>>,
     notify: NotifyConfig,
+    replay: crate::replay::ReplayConfig,
+    session_path: Option<&std::path::Path>,
 ) -> Result<()> {
     // Track the last time the session grew. Drives both --notify-on-idle
     // (fire when too-long-since-growth) and the idle_fired latch that
@@ -1020,6 +1030,10 @@ fn run_loop(
     // threshold has been crossed.
     let mut last_growth = std::time::Instant::now();
     let mut idle_fired = false;
+    // Phase 5.4 — pending replay confirm. Set when the user presses
+    // `R` on a replayable step; cleared on y/n. A Some value means
+    // "next keystroke is a confirm response."
+    let mut pending_replay: Option<(usize, String)> = None;
     loop {
         // Live reload: poll file and refresh if step count changed.
         if let Some(reload) = reload_fn
@@ -1919,6 +1933,67 @@ fn run_loop(
                 KeyCode::Char('A') => {
                     app.clear_count();
                     app.toggle_annotations_list();
+                }
+                KeyCode::Char('R') => {
+                    // Phase 5.4 — experimental tool-call replay.
+                    // Requires `--experimental-replay` and (for
+                    // Bash) `--allow-shell-replay`. Per-invocation
+                    // confirm via `y` in the status bar.
+                    app.clear_count();
+                    if let Some(view_idx) = app.list_state.selected()
+                        && let Some(&orig) = app.filtered_view.get(view_idx)
+                        && let Some(step) = app.steps.get(orig)
+                    {
+                        match crate::replay::classify(step, &replay) {
+                            crate::replay::ReplayIntent::NeedsConfirm { input } => {
+                                let preview = input.chars().take(60).collect::<String>();
+                                app.status_msg = Some(format!(
+                                    "replay step {}: `{preview}` — press y to run, Esc to cancel",
+                                    orig + 1
+                                ));
+                                pending_replay = Some((orig, input));
+                            }
+                            crate::replay::ReplayIntent::FlagMissing { hint } => {
+                                app.status_msg = Some(format!("replay blocked: {hint}"));
+                            }
+                            crate::replay::ReplayIntent::NotReplayable { reason } => {
+                                app.status_msg = Some(format!("replay skipped: {reason}"));
+                            }
+                        }
+                    }
+                }
+                KeyCode::Char('y') if pending_replay.is_some() => {
+                    let (step_idx, input) = pending_replay.take().expect("checked");
+                    app.status_msg = Some(format!("running replay for step {}…", step_idx + 1));
+                    match crate::replay::execute_shell(&input) {
+                        Ok(output) => {
+                            let exit = output
+                                .exit_code
+                                .map_or_else(|| "signal".to_string(), |c| c.to_string());
+                            // Best-effort log. A write failure
+                            // shouldn't block the user from seeing
+                            // the result in the status bar.
+                            let log_result = if let Some(path) = session_path
+                                && let Some(step) = app.steps.get(step_idx)
+                            {
+                                crate::replay::log_replay(path, step_idx, step, &input, &output)
+                            } else {
+                                Ok(())
+                            };
+                            let log_note = match log_result {
+                                Ok(()) => "logged",
+                                Err(_) => "log failed",
+                            };
+                            app.status_msg = Some(format!(
+                                "replay exit={exit} in {}ms ({log_note}); {}B stdout",
+                                output.duration_ms,
+                                output.stdout.len(),
+                            ));
+                        }
+                        Err(e) => {
+                            app.status_msg = Some(format!("replay failed: {e}"));
+                        }
+                    }
                 }
                 KeyCode::Char('b') => {
                     app.clear_count();

@@ -27,4 +27,5 @@ pub use agx_core::{
 
 pub mod corpus_tui;
 pub mod diff_tui;
+pub mod replay;
 pub mod tui;

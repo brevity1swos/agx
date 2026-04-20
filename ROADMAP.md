@@ -14,7 +14,7 @@ phase can be parallelized across contributors.
 | 2     | v0.3 OTel GenAI + Framework Traces           | ✅ shipped (2026-04-18)                            |
 | 3     | v0.4 Corpus Analysis & Performance           | ✅ shipped (3.1 – 3.4; criterion in 3.2 shipped)   |
 | 4     | v0.5 Diff, Search Depth, Annotations         | ✅ shipped (4.1 – 4.4)                             |
-| 5     | v0.6 Branch, Replay, MCP-Aware Tool Calls    | 🟡 3 of 5 (5.1 / 5.3 / 5.5 shipped; 5.2 🚧 5.4 ⏳)  |
+| 5     | v0.6 Branch, Replay, MCP-Aware Tool Calls    | 🟡 4 of 5 (5.1 / 5.3 / 5.4 / 5.5 shipped; 5.2 🚧)   |
 | 6     | v0.7 RL Export + Eval-Harness                | ✅ shipped (6.1 – 6.4; long-tail exports deferred) |
 | 7     | v0.8 Library Mode                            | ✅ shipped (7.1 – 7.4 scaffolds; 7.4b CI ⏳)       |
 | 8     | v1.0 Long Tail, Docs, Stabilization          | 🔲 started (8.5 agx doctor + retrofits shipped)    |
@@ -909,20 +909,40 @@ lean into MCP as the tool-call metadata layer matures.
 - [x] 2 new unit tests in `notify.rs`: feature-disabled message
       content check, no-op behavior on feature-off path.
 
-**5.4 — Replay a tool call** — `--experimental-replay` gate
-- [ ] `R` in TUI on a `tool_use` opens replay mode; detail pane becomes
-      editable, input JSON editable inline
-- [ ] Pluggable backends:
-  - **MCP backend**: if a running MCP server supports the tool, dispatch
-    through it (safest, declarative permissions)
-  - **Shell backend**: for Bash-like tools, gated behind
-    `--allow-shell-replay` AND confirmed per-invocation
-  - **API backend**: Anthropic / OpenAI / Google SDK dispatch, requires
-    env-var auth, gated behind `--allow-api-replay`
-- [ ] Output appended to a side `replay.log`; original session file is
-      **never** modified
-- [ ] Ships behind `agx --experimental-replay` for at least two releases
-      before graduation
+**5.4 — Replay a tool call** — `--experimental-replay` gate ✅ (shipped 2026-04-18, v1 = shell)
+- [x] `R` in TUI on a `tool_use` step classifies via `replay::classify()`;
+      three mutually-exclusive outcomes: `NeedsConfirm { input }` (shows
+      confirm prompt in status bar), `NotReplayable { reason }` (wrong
+      step kind or tool family), `FlagMissing { hint }` (points at the
+      flag the user needs to pass at launch).
+- [x] Three independent safety gates must all pass:
+  1. `--experimental-replay` at launch — announces intent
+  2. `--allow-shell-replay` at launch — tool-kind backend gate
+  3. Per-invocation `y` confirm in TUI — even with both flags
+- [x] **Shell backend** (v1): spawns `/bin/sh -c <input>` via
+      `replay::execute_shell()`, captures stdout / stderr / exit code /
+      wall-clock ms. Detail pane shows the result inline; no mutation of
+      the session file.
+- [x] **JSONL sidecar log**: every replay attempt appends one line to
+      `<session>.replay.log` next to the session. Schema: `ts_ms`,
+      `step_index`, `tool_name`, `tool_call_id`, `input`, `exit_code`,
+      `duration_ms`, `stdout`, `stderr`. Original session file is
+      **never** touched — agx-core's read-only posture is absolute.
+      Reviewers can `tail -f` during a session or `jq` afterward.
+- [x] Input extraction tolerates both `command` (Claude Code / Codex
+      shape) and `cmd` (Gemini shape) JSON fields — mirrors the same
+      duck-typing that the tool-use parsers already do.
+- [x] 8 unit tests cover all three gates, non-shell-tool refusal,
+      non-tool-use-step refusal, shell execution capturing exit code +
+      stdout, sidecar log append format, and both input-field fallbacks.
+- [ ] **MCP backend** (deferred): dispatch through a running MCP server
+      with declarative permissions. Classifier already routes by tool
+      name, so this is an additional arm, not a rewrite.
+- [ ] **API backend** (deferred): Anthropic / OpenAI / Google SDK dispatch
+      behind `--allow-api-replay`. Needs env-var auth plumbing.
+- [x] Flag is `hidden = true` on the CLI and the docstring prefixes
+      "Phase 5.4 — experimental". Ships behind `--experimental-replay`
+      for at least two releases before graduation.
 
 **5.5 — `--jump-to <STEP>` for stepwise Timeline jump** ✅ (shipped 2026-04-19)
 - [x] `agx <session> --jump-to <N>` CLI flag. `N` is a 0-indexed step

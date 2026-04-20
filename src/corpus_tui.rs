@@ -298,6 +298,7 @@ pub fn run(sessions: Vec<ParsedSession>, stats: &CorpusStats, no_cost: bool) -> 
                     Some(&path),
                     None,
                     crate::tui::NotifyConfig::default(),
+                    crate::replay::ReplayConfig::default(),
                 )?;
             }
             Err(e) => {
