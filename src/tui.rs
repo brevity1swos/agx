@@ -1908,6 +1908,23 @@ fn run_loop(
                 continue;
             }
 
+            // Phase 5.4 — auto-cancel a pending replay confirm on
+            // any key other than `y` (confirm) or `R` (start a new
+            // replay). `Esc` is the explicit cancel path and short-
+            // circuits the quit arm below. Every other key falls
+            // through to its normal handler after clearing the
+            // pending state, so navigating away from the prompt
+            // can't leave a stale `y` primed for the wrong step.
+            if pending_replay.is_some()
+                && !matches!(key.code, KeyCode::Char('y') | KeyCode::Char('R'))
+            {
+                pending_replay = None;
+                if matches!(key.code, KeyCode::Esc) {
+                    app.status_msg = Some("replay cancelled".to_string());
+                    continue;
+                }
+            }
+
             match key.code {
                 KeyCode::Char('q') | KeyCode::Esc => break,
                 KeyCode::Char('?') | KeyCode::F(1) => {
@@ -1967,9 +1984,7 @@ fn run_loop(
                     app.status_msg = Some(format!("running replay for step {}…", step_idx + 1));
                     match crate::replay::execute_shell(&input) {
                         Ok(output) => {
-                            let exit = output
-                                .exit_code
-                                .map_or_else(|| "signal".to_string(), |c| c.to_string());
+                            let exit = output.exit_code.map_or("signal".into(), |c| c.to_string());
                             // Best-effort log. A write failure
                             // shouldn't block the user from seeing
                             // the result in the status bar.

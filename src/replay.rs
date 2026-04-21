@@ -85,8 +85,12 @@ pub fn classify(step: &Step, cfg: &ReplayConfig) -> ReplayIntent {
             hint: "shell replay requires `--allow-shell-replay` at launch",
         };
     }
-    let input = extract_shell_command(&step.detail).unwrap_or_default();
-    ReplayIntent::NeedsConfirm { input }
+    match extract_shell_command(&step.detail) {
+        Some(input) if !input.is_empty() => ReplayIntent::NeedsConfirm { input },
+        _ => ReplayIntent::NotReplayable {
+            reason: "could not extract shell command from step",
+        },
+    }
 }
 
 /// Pull the shell command out of a tool_use step's detail. The
@@ -127,7 +131,7 @@ pub fn execute_shell(input: &str) -> Result<ReplayOutput> {
         .arg("-c")
         .arg(input)
         .output()
-        .with_context(|| "spawning /bin/sh for replay")?;
+        .context("spawning /bin/sh for replay")?;
     let duration_ms = start.elapsed().as_millis();
     Ok(ReplayOutput {
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -258,6 +262,38 @@ mod tests {
             ReplayIntent::NeedsConfirm { input } => assert_eq!(input, "ls -la"),
             other => panic!("expected NeedsConfirm, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn classify_refuses_malformed_input() {
+        // A Bash step whose `Input:` section isn't valid JSON
+        // must surface as NotReplayable, not as NeedsConfirm
+        // with an empty string (which would otherwise spawn
+        // `/bin/sh -c ""` and log a misleading exit=0 entry).
+        let step = tool_use_step("t1", "Bash", "not-json-at-all");
+        let cfg = ReplayConfig {
+            enabled: true,
+            allow_shell: true,
+        };
+        assert!(matches!(
+            classify(&step, &cfg),
+            ReplayIntent::NotReplayable { .. }
+        ));
+    }
+
+    #[test]
+    fn classify_refuses_empty_command_string() {
+        // Defensive: a well-formed JSON with an empty command
+        // field must also be rejected, same reason as above.
+        let step = tool_use_step("t1", "Bash", "{\"command\":\"\"}");
+        let cfg = ReplayConfig {
+            enabled: true,
+            allow_shell: true,
+        };
+        assert!(matches!(
+            classify(&step, &cfg),
+            ReplayIntent::NotReplayable { .. }
+        ));
     }
 
     #[test]
