@@ -30,8 +30,10 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -166,13 +168,22 @@ pub(crate) fn execute_shell_with_limits(
     max_capture_bytes: usize,
 ) -> Result<ReplayOutput> {
     let start = std::time::Instant::now();
-    let mut child = Command::new("/bin/sh")
-        .arg("-c")
+    let mut cmd = Command::new("/bin/sh");
+    cmd.arg("-c")
         .arg(input)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("spawning /bin/sh for replay")?;
+        .stderr(Stdio::piped());
+    // On Unix, put the shell in its own process group so deadline
+    // kills can reach grandchildren too. Without this, `/bin/sh -c
+    // "sleep 60"` orphans the `sleep` when we kill only the shell
+    // — `sleep` keeps holding the write end of our stdout/stderr
+    // pipes, so our reader threads block on `read()` until the
+    // orphan exits naturally (60 s in the test, → CI failure on
+    // Linux; macOS happened to pass by luck). See
+    // `kill_process_group` below.
+    #[cfg(unix)]
+    cmd.process_group(0);
+    let mut child = cmd.spawn().context("spawning /bin/sh for replay")?;
 
     // Read each stream on its own thread with a byte cap. `take(N)`
     // wraps the ChildStdout in `io::Take`; when that wrapper is
@@ -194,7 +205,7 @@ pub(crate) fn execute_shell_with_limits(
         match child.try_wait().context("polling replay child")? {
             Some(status) => break status.code(),
             None if std::time::Instant::now() >= deadline => {
-                let _ = child.kill();
+                kill_process_group(&mut child);
                 timed_out = true;
                 let status = child.wait().context("waiting for killed replay child")?;
                 break status.code();
@@ -216,6 +227,33 @@ pub(crate) fn execute_shell_with_limits(
         stdout_truncated,
         stderr_truncated,
     })
+}
+
+/// Kill the replay child and (on Unix) every other process in
+/// its process group. Used when the wall-clock deadline fires.
+///
+/// On Unix the shell is spawned via `process_group(0)`, so its
+/// PID is its PGID. `kill(-pgid, SIGKILL)` reaches the shell and
+/// every grandchild — without this, a grandchild like `sleep 60`
+/// is orphaned (adopted by init) and keeps the write end of our
+/// stdout/stderr pipes open, blocking our reader threads on
+/// `read()` until the orphan exits naturally. On non-Unix the
+/// fallback is the regular per-process kill.
+fn kill_process_group(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        let pgid = child.id() as i32;
+        // SAFETY: libc::kill is safe to call; we pass a negative
+        // PID to target the process group whose leader is `pgid`.
+        // SIGKILL cannot be caught, so the whole group dies.
+        unsafe {
+            libc::kill(-pgid, libc::SIGKILL);
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = child.kill();
+    }
 }
 
 /// Drain a child-owned byte stream with a hard cap. Returns

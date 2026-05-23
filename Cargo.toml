@@ -66,7 +66,7 @@ notifications = ["agx-core/notifications"]
 # Pure parsers + timeline + corpus aggregation live in agx-core.
 # The feature flags above pass through so this crate's callers only
 # need to flip them on `agx` (the bin), not on `agx-core` directly.
-agx-core = { path = "crates/agx-core" }
+agx-core = { path = "crates/agx-core", version = "0.1.0" }
 # TUI layer — ratatui + crossterm + arboard. These are the deps
 # that justify keeping agx-core separate: they're irrelevant to
 # anyone driving the parsers from Python / WASM / custom tooling.
@@ -81,6 +81,12 @@ clap_complete = "4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
+
+[target.'cfg(unix)'.dependencies]
+# Used only for `libc::kill(-pgid, SIGKILL)` in `replay::kill_process_group`
+# — std doesn't expose a process-group-kill API. Tiny crate, already in the
+# transitive dep tree via ratatui / crossterm / arboard.
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3"

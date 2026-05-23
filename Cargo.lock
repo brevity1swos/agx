@@ -19,6 +19,7 @@ dependencies = [
  "clap_complete",
  "criterion",
  "crossterm",
+ "libc",
  "ratatui",
  "serde",
  "serde_json",

@@ -13,7 +13,7 @@ publish = false  # ships to npm via wasm-pack, not crates.io
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-agx-core = { path = "../agx-core" }
+agx-core = { path = "../agx-core", version = "0.1.0" }
 # wasm-bindgen generates JS glue from Rust functions annotated with
 # `#[wasm_bindgen]`. `rlib` above means cargo on native targets still
 # produces a plain library (for `cargo check -p agx-wasm`); the
