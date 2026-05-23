@@ -117,9 +117,9 @@ fn commit_component(num: &str, unit: &str) -> Result<u64> {
 }
 
 /// Parse `start..end`, `..end`, `start..`, or `..` into a [`StepRange`].
-/// End is always exclusive — `1..11` means the first ten steps (indices
-/// 0 through 9 when converted to 0-based, but the CLI accepts 1-based
-/// numbers; see [`StepRange::from_cli_range`] if you want that).
+/// End is always exclusive — `1..11` means the first ten steps. The CLI
+/// surface accepts 1-based numbers; the conversion to 0-based indices
+/// happens at the slice site.
 pub fn parse_step_range(raw: &str) -> Result<StepRange> {
     let s = raw.trim();
     let Some((left, right)) = s.split_once("..") else {
