@@ -1,0 +1,21 @@
+[workspace]
+changelog_config = "cliff.toml"
+allow_dirty = true
+git_release_enable = true
+git_tag_enable = true
+
+# agx-cli is the user-facing binary crate; agx-core is the pure
+# parser library reused by agx-py, agx-wasm, and any external
+# eval-harness consumer. Both publish to crates.io.
+#
+# agx-py and agx-wasm have publish = false in their own Cargo.toml
+# — they ship to PyPI via maturin and to npm via wasm-pack
+# respectively, not to crates.io. agx-mcp is the local MCP-server
+# bin reused only inside this workspace and stays unpublished too.
+[[package]]
+name = "agx-core"
+publish = true
+
+[[package]]
+name = "agx-cli"
+publish = true
