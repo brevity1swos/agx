@@ -12,20 +12,30 @@ Inspired by [rgx](https://github.com/brevity1swos/rgx) — same dual-cursor / he
 
 ## Install
 
-### From source (recommended)
+### From crates.io
+
+```bash
+cargo install agx-cli
+```
+
+The published crate is `agx-cli` (the unqualified `agx` name on crates.io was taken by an unrelated project before this one started); the installed binary is `agx`.
+
+Requires Rust 1.85+ (edition 2024).
+
+Binary OTLP (`.pb` / `.otlp`) support is opt-in because `prost` adds meaningful binary size. If you consume protobuf trace files from `opentelemetry-collector`:
+
+```bash
+cargo install agx-cli --features otel-proto
+```
+
+Other opt-in features: `embedding-search` (semantic `//query`, pulls a ~90MB MiniLM model on first use), `notifications` (desktop notifications for `--live` mode).
+
+### From source
 
 ```bash
 git clone https://github.com/brevity1swos/agx.git
 cd agx
 cargo install --path .
-```
-
-Requires Rust 1.85+ (edition 2024).
-
-Binary OTLP (`.pb` / `.otlp`) support is opt-in because `prost` adds meaningful binary size. If you consume protobuf trace files from `opentelemetry-collector`, add `--features otel-proto`:
-
-```bash
-cargo install --path . --features otel-proto
 ```
 
 ### Shell completions

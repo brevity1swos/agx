@@ -16,13 +16,35 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/brevity1swos/agx"
 
 [package]
-name = "agx"
+# Crate published to crates.io as `agx-cli`. The `agx` name was
+# squatted on 2026-03-19 by an unrelated project ("Cross-platform
+# AI agent terminal multiplexer", 21 downloads). The binary that
+# users actually invoke remains `agx` — see the `[[bin]]` section
+# below — so `cargo install agx-cli && agx --help` is the install
+# UX.
+name = "agx-cli"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
-description = "Step-through debugger for your agent"
+description = "Step-through debugger for your agent — terminal-native session timeline viewer for Claude Code, Codex, Gemini, LangChain, Vercel AI SDK, and OpenTelemetry GenAI traces"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/brevity1swos/agx"
+documentation = "https://docs.rs/agx-cli"
+keywords = ["agent", "debugger", "tui", "claude", "observability"]
+categories = ["command-line-utilities", "development-tools::debugging"]
+readme = "README.md"
+
+[[bin]]
+name = "agx"
+path = "src/main.rs"
+
+# Keep the internal lib name as `agx` even though the published
+# crate is `agx-cli`. main.rs and the bench import via `use agx::…`;
+# without an explicit `[lib]` entry cargo would derive the lib name
+# from the package name (`agx_cli`) and break every internal use.
+[lib]
+name = "agx"
+path = "src/lib.rs"
 
 [features]
 # Feature flags are re-exported from agx-core so users flip the same
