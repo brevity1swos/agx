@@ -10,10 +10,10 @@ Stability commitments — which fields, flags, and APIs will or won't change acr
 
 The substance release. Adds two more agent-trace formats (LangChain, Vercel AI SDK), full OpenTelemetry GenAI support, fork / branch detection, jump-to-step launch positioning, desktop notifications for live mode, trajectory export for RL training data, corpus-level distributional stats, PII / credential scanning, an experimental shell-replay subsystem with triple-gate safety, a workspace split with publish-ready Python (PyPI) / WASM (npm) bindings, formal stability commitments, an MCP server for agent self-introspection, and an `agx doctor` health-check subcommand.
 
-The published crate is **`agx-cli`** — the `agx` name on crates.io was claimed by an unrelated project before this one existed. The installed binary remains `agx`:
+The published crate is **`agx-tui`** — the `agx` name on crates.io was claimed by an unrelated project before this one existed. The installed binary remains `agx`:
 
 ```
-cargo install agx-cli && agx --help
+cargo install agx-tui && agx --help
 ```
 
 ### Added — Format Support
@@ -39,7 +39,7 @@ cargo install agx-cli && agx --help
 
 ### Added — Phase 7: Library Mode
 
-- **Phase 7.1** — Workspace split. `crates/agx-core/` is the pure, TUI-free library (parsers, timeline, corpus, pricing, annotations, PII, semantic, notify, export). Top-level `agx-cli` keeps the TUI + clap + arboard dependencies. `agx-core` is publishable to crates.io independently for Python / WASM / eval-harness consumers.
+- **Phase 7.1** — Workspace split. `crates/agx-core/` is the pure, TUI-free library (parsers, timeline, corpus, pricing, annotations, PII, semantic, notify, export). Top-level `agx-tui` keeps the TUI + clap + arboard dependencies. `agx-core` is publishable to crates.io independently for Python / WASM / eval-harness consumers.
 - **Phase 7.2** — `crates/agx-py/` PyO3 Python bindings scaffold. `agx.load(path)`, `agx.load_corpus(dir)`, `agx.scan_pii(text)`. Builds via `maturin`; abi3-py310 means one wheel per platform across all Python ≥ 3.10.
 - **Phase 7.3** — `crates/agx-wasm/` wasm-bindgen bindings scaffold. `load(filename, bytes)`, `scan_pii(text)`, `version()`. Builds via `wasm-pack` for browsers / Node / Deno; bytes-in API so the JS side owns I/O.
 - **Phase 7.4** — [`docs/stability.md`](docs/stability.md) formalizes the SemVer and schema-stability commitments. `Format` and `StepKind` enums marked `#[non_exhaustive]` so external consumers handle future variant additions without breaking.
@@ -62,7 +62,7 @@ cargo install agx-cli && agx --help
 
 ### Infrastructure
 
-- Crate published to crates.io as `agx-cli`; the binary, the internal lib (`use agx::…`), and the brand all remain `agx`.
+- Crate published to crates.io as `agx-tui`; the binary, the internal lib (`use agx::…`), and the brand all remain `agx`.
 - `src/lib.rs` is a thin re-export shim — every `agx::X` from earlier versions resolves after the workspace split.
 - `corpus::run` gained a `TuiLauncher` callback parameter so `agx-core` stays TUI-free.
 - `Step.is_fork_root` and `Step.tool_call_id` added to the shared model (serde-defaulted; non-Claude-Code parsers leave them false / `None`).

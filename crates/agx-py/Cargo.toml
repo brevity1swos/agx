@@ -14,7 +14,7 @@ name = "agx"  # Python import name: `import agx`
 crate-type = ["cdylib"]
 # Skip rustdoc generation for this crate. It's a Python extension
 # (cdylib), not a Rust API surface — and the lib name `agx`
-# collides with agx-cli's `[lib] name = "agx"` under
+# collides with agx-tui's `[lib] name = "agx"` under
 # `cargo doc --workspace`, which writes both to target/doc/agx.
 doc = false
 

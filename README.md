@@ -1,10 +1,10 @@
 # agx
 
-[![crates.io](https://img.shields.io/crates/v/agx-cli.svg?label=agx-cli)](https://crates.io/crates/agx-cli)
+[![crates.io](https://img.shields.io/crates/v/agx-tui.svg?label=agx-tui)](https://crates.io/crates/agx-tui)
 [![crates.io](https://img.shields.io/crates/v/agx-core.svg?label=agx-core)](https://crates.io/crates/agx-core)
 [![docs.rs](https://img.shields.io/docsrs/agx-core)](https://docs.rs/agx-core)
 [![CI](https://github.com/brevity1swos/agx/actions/workflows/ci.yml/badge.svg)](https://github.com/brevity1swos/agx/actions/workflows/ci.yml)
-[![license](https://img.shields.io/crates/l/agx-cli.svg)](https://github.com/brevity1swos/agx#license)
+[![license](https://img.shields.io/crates/l/agx-tui.svg)](https://github.com/brevity1swos/agx#license)
 
 *[rgx](https://github.com/brevity1swos/rgx) is to regex101 what agx is to your browser-based agent trace dashboard — the terminal-native sibling. Zero instrumentation, works on Claude Code / Codex / Gemini out of the box.*
 
@@ -21,17 +21,17 @@ Inspired by [rgx](https://github.com/brevity1swos/rgx) — same dual-cursor / he
 ### From crates.io
 
 ```bash
-cargo install agx-cli
+cargo install agx-tui
 ```
 
-The published crate is `agx-cli` (the unqualified `agx` name on crates.io was taken by an unrelated project before this one started); the installed binary is `agx`.
+The published crate is `agx-tui` (the unqualified `agx` name on crates.io was taken by an unrelated project before this one started); the installed binary is `agx`.
 
 Requires Rust 1.85+ (edition 2024).
 
 Binary OTLP (`.pb` / `.otlp`) support is opt-in because `prost` adds meaningful binary size. If you consume protobuf trace files from `opentelemetry-collector`:
 
 ```bash
-cargo install agx-cli --features otel-proto
+cargo install agx-tui --features otel-proto
 ```
 
 Other opt-in features: `embedding-search` (semantic `//query`, pulls a ~90MB MiniLM model on first use), `notifications` (desktop notifications for `--live` mode).

@@ -4,9 +4,14 @@ allow_dirty = true
 git_release_enable = true
 git_tag_enable = true
 
-# agx-cli is the user-facing binary crate; agx-core is the pure
+# agx-tui is the user-facing binary crate; agx-core is the pure
 # parser library reused by agx-py, agx-wasm, and any external
 # eval-harness consumer. Both publish to crates.io.
+#
+# `agx` and `agx-cli` are both taken on crates.io by unrelated
+# projects (agx-cli is the photo-editing CLI for agx-photo), so
+# the binary crate publishes as `agx-tui`. The binary that users
+# actually invoke remains `agx`.
 #
 # agx-py and agx-wasm have publish = false in their own Cargo.toml
 # — they ship to PyPI via maturin and to npm via wasm-pack
@@ -17,5 +22,5 @@ name = "agx-core"
 publish = true
 
 [[package]]
-name = "agx-cli"
+name = "agx-tui"
 publish = true
