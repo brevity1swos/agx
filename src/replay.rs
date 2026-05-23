@@ -468,6 +468,13 @@ mod tests {
         }
     }
 
+    // The four `execute_shell*` tests below spawn `/bin/sh`, which
+    // doesn't exist on Windows CI runners. The replay feature is
+    // Unix-only by design (the classifier only recognizes Bash-shaped
+    // tool_use steps; Windows shells aren't a supported backend);
+    // gating the tests with `#[cfg(unix)]` mirrors that posture and
+    // keeps Windows CI green.
+    #[cfg(unix)]
     #[test]
     fn execute_shell_captures_exit_and_stdout() {
         let out = execute_shell("echo hello && false").expect("shell runs");
@@ -500,6 +507,7 @@ mod tests {
         assert!(content.contains("\"stdout_truncated\":false"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn execute_shell_caps_stdout_at_the_limit() {
         // A tight cap (64 bytes) paired with a 2KB write proves the
@@ -518,6 +526,7 @@ mod tests {
         assert!(!out.timed_out, "did not time out");
     }
 
+    #[cfg(unix)]
     #[test]
     fn execute_shell_caps_stderr_at_the_limit() {
         // Symmetric coverage for the stderr cap. Same awk shape,
@@ -530,6 +539,7 @@ mod tests {
         assert!(!out.stdout_truncated, "stdout untouched");
     }
 
+    #[cfg(unix)]
     #[test]
     fn execute_shell_times_out_on_long_running() {
         // `sleep 60` would finish well past the 1s deadline. The
