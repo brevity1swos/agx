@@ -23,7 +23,7 @@ repository = "https://github.com/brevity1swos/agx"
 # below — so `cargo install agx-cli && agx --help` is the install
 # UX.
 name = "agx-cli"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.85"
 description = "Step-through debugger for your agent — terminal-native session timeline viewer for Claude Code, Codex, Gemini, LangChain, Vercel AI SDK, and OpenTelemetry GenAI traces"
