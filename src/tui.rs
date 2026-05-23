@@ -1999,8 +1999,27 @@ fn run_loop(
                                 Ok(()) => "logged",
                                 Err(_) => "log failed",
                             };
+                            // Surface the backpressure flags so a
+                            // timeout-kill or a 4MiB-capped buffer
+                            // isn't visually indistinguishable from
+                            // a normal completion.
+                            let mut markers: Vec<&str> = Vec::new();
+                            if output.timed_out {
+                                markers.push("timed out");
+                            }
+                            if output.stdout_truncated {
+                                markers.push("stdout truncated");
+                            }
+                            if output.stderr_truncated {
+                                markers.push("stderr truncated");
+                            }
+                            let suffix = if markers.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" [{}]", markers.join(", "))
+                            };
                             app.status_msg = Some(format!(
-                                "replay exit={exit} in {}ms ({log_note}); {}B stdout",
+                                "replay exit={exit} in {}ms ({log_note}); {}B stdout{suffix}",
                                 output.duration_ms,
                                 output.stdout.len(),
                             ));
