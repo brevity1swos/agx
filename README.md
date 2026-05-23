@@ -1,5 +1,11 @@
 # agx
 
+[![crates.io](https://img.shields.io/crates/v/agx-cli.svg?label=agx-cli)](https://crates.io/crates/agx-cli)
+[![crates.io](https://img.shields.io/crates/v/agx-core.svg?label=agx-core)](https://crates.io/crates/agx-core)
+[![docs.rs](https://img.shields.io/docsrs/agx-core)](https://docs.rs/agx-core)
+[![CI](https://github.com/brevity1swos/agx/actions/workflows/ci.yml/badge.svg)](https://github.com/brevity1swos/agx/actions/workflows/ci.yml)
+[![license](https://img.shields.io/crates/l/agx-cli.svg)](https://github.com/brevity1swos/agx#license)
+
 *[rgx](https://github.com/brevity1swos/rgx) is to regex101 what agx is to your browser-based agent trace dashboard — the terminal-native sibling. Zero instrumentation, works on Claude Code / Codex / Gemini out of the box.*
 
 ![demo](assets/demo.gif)
@@ -29,6 +35,16 @@ cargo install agx-cli --features otel-proto
 ```
 
 Other opt-in features: `embedding-search` (semantic `//query`, pulls a ~90MB MiniLM model on first use), `notifications` (desktop notifications for `--live` mode).
+
+### As a library — `agx-core` on [crates.io](https://crates.io/crates/agx-core)
+
+If you're building a custom eval harness, RL trajectory pipeline, or any tool that needs to parse agent traces without the TUI, depend on [`agx-core`](https://crates.io/crates/agx-core) directly:
+
+```bash
+cargo add agx-core
+```
+
+`agx-core` is the pure, TUI-free heart of the binary — every parser (Claude Code, Codex, Gemini, OpenAI-generic, LangChain, Vercel AI SDK, OTel GenAI JSON, OTel binary protobuf), the timeline / step model, corpus aggregation, cost / pricing, PII scanner, and the JSON export shape that `agx --export json` writes. Zero dependency on ratatui / crossterm / arboard. Documentation: [docs.rs/agx-core](https://docs.rs/agx-core). The Python bindings (`agx-py` on PyPI) and WASM bindings (`agx-wasm` on npm) wrap this same crate.
 
 ### From source
 
