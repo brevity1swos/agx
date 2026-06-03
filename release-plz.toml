@@ -3,6 +3,7 @@ changelog_config = "cliff.toml"
 allow_dirty = true
 git_release_enable = true
 git_tag_enable = true
+release_commits = "^(feat|fix|perf|refactor|docs?\\(readme\\))[(:!]"
 
 # agx-tui is the user-facing binary crate; agx-core is the pure
 # parser library reused by agx-py, agx-wasm, and any external
