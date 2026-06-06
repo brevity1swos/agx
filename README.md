@@ -77,7 +77,7 @@ Selecting a `[result]` step reveals **both the original tool call input and the 
 
 ## Format support
 
-agx auto-detects the session format by inspecting the first line (JSONL) or the wrapper shape (single JSON object). Five formats ship out of the box — the three major agent CLIs, generic OpenAI-compatible conversations, and OpenTelemetry GenAI traces:
+agx auto-detects the session format by inspecting the first line (JSONL) or the wrapper shape (single JSON object). Eight formats ship out of the box — the three major agent CLIs, framework-level traces, and OpenTelemetry GenAI:
 
 | Format | Session location | Support |
 |---|---|---|
@@ -90,7 +90,7 @@ agx auto-detects the session format by inspecting the first line (JSONL) or the 
 | OpenTelemetry GenAI (JSON) | any OTLP-JSON traces export with `resourceSpans` + `gen_ai.*` attributes | ✅ Full |
 | OpenTelemetry GenAI (binary protobuf `.pb` / `.otlp`) | OTLP exports from `opentelemetry-collector`, OTLP/HTTP endpoints | ✅ Full (feature-gated — rebuild with `--features otel-proto`) |
 
-Each format has its own parser module (`src/session.rs`, `src/codex.rs`, `src/gemini.rs`, `src/generic.rs`, `src/otel_json.rs`) that converts format-specific entries into the shared `timeline::Step` model. Tool calls are paired with their results regardless of how the underlying format represents the relationship — Claude Code uses `tool_use_id`, Codex uses `call_id`, Gemini packs the call and result into a single atomic `toolCall` object that agx splits, OpenAI-compatible conversations pair by position, and OTel GenAI uses `gen_ai.tool.call.id` on execute_tool spans.
+Each format has its own parser module in `crates/agx-core/src/` that converts format-specific entries into the shared `timeline::Step` model. Tool calls are paired with their results regardless of how the underlying format represents the relationship — Claude Code uses `tool_use_id`, Codex uses `call_id`, Gemini packs the call and result into a single atomic `toolCall` object that agx splits, OpenAI-compatible conversations pair by position, and OTel GenAI uses `gen_ai.tool.call.id` on execute_tool spans.
 
 Because OTel GenAI is the converging instrumentation standard across LangChain, LlamaIndex, Vercel AI SDK, Pydantic AI, and any framework that wires in OpenLLMetry or Traceloop, that row covers most framework-level agentic workloads without per-framework parsers.
 
@@ -201,7 +201,7 @@ Then launch agx on any of them — no flag needed, format is auto-detected:
 ./target/release/agx ~/.gemini/tmp/<project>/chats/session-<ts>.json
 ```
 
-For non-interactive use (scripts, CI, piping), use `--summary` mode. When the session carries token-usage data, agx also prints totals and a USD cost estimate (rates are from a hand-curated pricing table — see `src/pricing.rs` for the current entries and their `last_verified` dates):
+For non-interactive use (scripts, CI, piping), use `--summary` mode. When the session carries token-usage data, agx also prints totals and a USD cost estimate (rates are from a hand-curated pricing table — see `crates/agx-core/src/pricing.rs` for the current entries and their `last_verified` dates):
 
 ```bash
 $ ./target/release/agx --summary assets/sample_session.jsonl
@@ -223,6 +223,10 @@ First 20:
 
 ## Keys
 
+Press `?` or `F1` inside the TUI for the full cheat sheet.
+
+### Navigation
+
 | Key | Action |
 |---|---|
 | `↓` / `j` | next step |
@@ -231,28 +235,61 @@ First 20:
 | `PgUp` / `u` | jump 10 steps back |
 | `Home` / `g` | first step |
 | `End` / `G` | last step |
-| `?` / `F1` | toggle help overlay |
+| `:N` | jump to visible row N |
+| `:@<duration>` | jump to first step ≥ offset from session start (1h30m, 5m, 90s) |
+| `<N><motion>` | vim count prefix (3j, 5k, 2d, 42G, ...) |
+
+### Filter & Search
+
+| Key | Action |
+|---|---|
+| `f` | open filter prompt (hides non-matching rows) |
+| `/` | open search prompt (highlights matches) |
+| `//query` | semantic search (opt-in: `--features embedding-search`) |
+| `n` / `N` | next / prev search match |
+
+### Bookmarks & Annotations
+
+| Key | Action |
+|---|---|
+| `m<char>` | set bookmark at current step |
+| `'<char>` | jump to bookmark |
+| `a` | add / edit / clear annotation on current step |
+| `A` | list all annotations (Enter jumps to step) |
+
+### Other
+
+| Key | Action |
+|---|---|
+| `b` | list all fork roots (Claude Code edit/resume branches) |
+| `y` | copy current step detail to clipboard |
+| `h` | toggle heatmap mode (tool-call density) |
+| `s` | toggle tool usage stats overlay |
+| `Tab` | toggle 3-pane / 2-pane layout |
+| `mouse click` | select row in timeline |
+| `mouse scroll` | prev / next step |
+| `?` / `F1` | toggle help |
 | `q` / `Esc` | quit |
 
 ## Status
 
-Everything below works end-to-end on real sessions across all five supported formats, including sessions with thousands of entries. See `ROADMAP.md` for what's planned next (OTLP protobuf, framework-specific parsers, corpus analytics, RL trajectory export, library mode).
+Everything below works end-to-end on real sessions across all supported formats, including sessions with thousands of entries. See `ROADMAP.md` for the full feature timeline.
 
 ### Working
 
 **Formats**
-- **Multi-format support**: Claude Code, Codex CLI, Gemini CLI, generic OpenAI-compatible conversations, and OpenTelemetry GenAI JSON — all auto-detected (see Format support table)
+- **Multi-format support**: Claude Code, Codex CLI, Gemini CLI, generic OpenAI-compatible, LangChain / LangSmith, Vercel AI SDK, OTel GenAI JSON, and OTel binary protobuf — all auto-detected (see Format support table)
 - **Multi-session browser**: launch with no args to scan `~/.claude`, `~/.codex`, `~/.gemini` for recent sessions
 - **Bidirectional tool pairing**: each tool_result shows both the originating call input and the response
 - **`--debug-unknowns`**: per-format drift scanner reports unknown entry types / payload types / operation names to stderr with line-number samples — useful for diagnosing a new CLI release before it breaks parsing
 
 **Observability & cost** (Phase 1, shipped 2026-04-15)
 - **Per-step token usage**: `tokens_in`, `tokens_out`, `cache_read`, `cache_create` parsed from Claude Code, Codex, Gemini, generic OpenAI, and OTel GenAI sessions. Attached to the first step of each assistant message so corpus-level sums don't double-count.
-- **USD cost estimates**: hand-curated pricing table in `src/pricing.rs` covers opus-4-6, sonnet-4-6, haiku-4-5, gpt-5, gpt-5-mini, gemini-2-5-pro, gemini-2-5-flash. Returns `None` on unknown models rather than fabricating cost.
+- **USD cost estimates**: hand-curated pricing table in `crates/agx-core/src/pricing.rs` covers opus-4-6, sonnet-4-6, haiku-4-5, gpt-5, gpt-5-mini, gemini-2-5-pro, gemini-2-5-flash. Returns `None` on unknown models rather than fabricating cost.
 - **`--summary`**: non-interactive total-tokens / total-cost / unique-models lines plus step counts and first 20 step labels
 - **TUI cost rendering**: running session cost in the status bar, per-step tokens + cost in the detail pane, session totals in the stats overlay (`s`)
 - **`--no-cost`**: suppresses cost estimates everywhere (summary, TUI, exports) while keeping token counts — for unpriced custom models or when cost is noise
-- **`--export md | html | json`**: Markdown transcript, self-contained HTML (inline CSS, no JS, no external assets, HTML-escaped detail), and stable-schema JSON (the reserved public programmatic interface)
+- **`--export md | html | json | trajectory-openai`**: Markdown transcript, self-contained HTML (inline CSS, no JS, no external assets), stable-schema JSON (public programmatic interface), and OpenAI fine-tuning JSONL (one `{messages}` object per session)
 
 **Navigation & UI**
 - **Three-pane layout**: timeline / conversation view / detail pane (Tab toggles 2-pane fallback)
@@ -275,37 +312,55 @@ Everything below works end-to-end on real sessions across all five supported for
 - **Help overlay** (`?` / `F1`) with keybinding reference and color legend
 - **Panic-safe terminal cleanup** (Drop-guarded raw mode)
 
+**Tooling**
+- **`agx doctor`** — health-check report: version, features, stepwise sibling availability (sift, rgx, agx-mcp)
+- **`agx-mcp`** — MCP server for agent self-introspection mid-session (list steps, read annotations, export)
+- **Experimental replay** (`R`, hidden flags) — re-execute a tool call from the TUI with triple-gate safety (flag + backend flag + per-invocation confirm)
+
 **Quality bar**
-- **181 tests** (171 unit + 1 corpus + 9 integration), clippy-clean under strict and pedantic lint groups, `cargo audit` clean
+- **369 tests** across the workspace (252 agx-core + 104 integration + 11 CLI + doc-tests), clippy-clean under strict and pedantic lint groups, `cargo audit` clean
 
 ## Why this exists
 
 When an AI agent does something unexpected, today's debugging options are hosted dashboards (Langfuse, LangSmith, Helicone) or `cat session.jsonl | jq`. There is no terminal-native step-through debugger that lets you scrub through agent execution the way `gdb` lets you scrub through program execution, or the way rgx lets you step through regex matches.
 
-agx is the rgx-style answer: deeply engineered, narrow scope, terminal-native. Multi-format eventually, but starting with the format that already has the largest user base — Claude Code session JSONL.
+agx is the rgx-style answer: deeply engineered, narrow scope, terminal-native. Eight formats auto-detected out of the box — Claude Code, Codex, Gemini, LangChain, Vercel AI SDK, OpenAI-compatible, and OpenTelemetry GenAI (JSON + binary).
 
 ## Architecture
 
 ```
+crates/
+├── agx-core/src/       # Pure parsers, timeline model, corpus, pricing, export, annotations, PII, semantic search
+│   ├── session.rs      # Claude Code JSONL parser
+│   ├── codex.rs        # Codex CLI JSONL parser
+│   ├── gemini.rs       # Gemini CLI single-JSON parser
+│   ├── generic.rs      # OpenAI-compatible conversation parser
+│   ├── langchain.rs    # LangChain / LangSmith run-tree parser
+│   ├── vercel_ai.rs    # Vercel AI SDK result parser
+│   ├── otel_json.rs    # OpenTelemetry GenAI JSON parser
+│   ├── otel_proto.rs   # Binary OTLP parser (feature-gated: otel-proto)
+│   ├── format.rs       # Format auto-detection
+│   ├── timeline.rs     # Shared Step / StepKind / Usage / SessionTotals
+│   ├── pricing.rs      # Per-model USD rate table
+│   ├── corpus.rs       # Parallel directory-walk aggregation
+│   ├── export.rs       # Markdown / HTML / JSON / trajectory-openai writers
+│   ├── annotations.rs  # Per-step notes (sidecar JSON under ~/.agx/notes/)
+│   ├── pii.rs          # Heuristic credential / PII scanner
+│   ├── semantic.rs     # Embedding-based search (feature-gated: embedding-search)
+│   └── ...
+├── agx-mcp/            # MCP server for agent self-introspection (standalone binary)
+├── agx-py/             # Python bindings via PyO3
+└── agx-wasm/           # WASM bindings via wasm-bindgen
 src/
-├── main.rs             # CLI entry (clap) + format dispatch + --summary / --export / --diff branches
-├── format.rs           # Format detection — returns ClaudeCode | Codex | Gemini | Generic | OtelJson
-├── browser.rs          # Multi-session discovery + picker
-├── session.rs          # Claude Code JSONL parser (serde Deserialize + ClaudeUsage)
-├── codex.rs            # Codex CLI JSONL parser (response_item + function_call pairing)
-├── gemini.rs           # Gemini CLI single-JSON parser (toolCall splitting + usageMetadata)
-├── generic.rs          # OpenAI-compatible conversation parser
-├── otel_json.rs        # OpenTelemetry GenAI JSON parser (OTLP-JSON + gen_ai.* semconv)
-├── timeline.rs         # Shared Step / StepKind / Usage / SessionTotals + helpers + compute_* functions
-├── pricing.rs          # Per-model USD rate table + cost computation
-├── export.rs           # Markdown / HTML / JSON transcript writers (no I/O)
-├── debug_unknowns.rs   # Per-format drift scanners for --debug-unknowns
-└── tui.rs              # ratatui TUI + event loop + overlays + panic-safe terminal guard
+├── main.rs             # CLI entry (clap) + format dispatch + --summary / --export / --diff
+├── lib.rs              # Re-exports agx-core + local TUI modules
+├── tui.rs              # ratatui TUI: three-pane layout, event loop, overlays, TerminalGuard
+├── corpus_tui.rs       # Interactive corpus browser (--tui)
+├── diff_tui.rs         # Side-by-side session diff TUI (--diff-tui)
+└── replay.rs           # Experimental tool-call replay (Phase 5.4, triple-gated)
 ```
 
 Each parser produces `Vec<Step>` directly; `timeline::build()` is the Claude Code adapter that converts the format's native `Entry` enum into Steps. All parsers share the same step helpers (`user_text_step`, `assistant_text_step`, `tool_use_step`, `tool_result_step`) and the same `attach_usage_to_first` anchor for model/token data — so the TUI renders every format identically and corpus sums never double-count.
-
-8 direct dependencies: `ratatui`, `crossterm`, `serde`, `serde_json`, `anyhow`, `clap`, `clap_complete`, `arboard`.
 
 ## Pairs well with
 
@@ -339,7 +394,7 @@ that changes a public CLI surface (per suite-conventions §7).
 | 0.2.x | planned ≥ 0.3   | 0.11.x+        |
 
 agx talks to its siblings at the subprocess boundary (`agx --export
-json`, `agx --summary`, future `agx --jump-to`) — no shared Rust
+json`, `agx --summary`, `agx --jump-to`) — no shared Rust
 library, no coordinated release train. Missing siblings never block
 agx's own flow.
 

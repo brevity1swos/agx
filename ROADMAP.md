@@ -175,7 +175,7 @@ features. Everything here is low-risk, small-diff, no architectural change.
 - [x] CONTRIBUTING.md documents anonymization + contribution flow
 
 **0.3 — `--debug-unknowns` flag** ✅
-- [x] `--debug-unknowns` CLI flag (`src/debug_unknowns.rs`)
+- [x] `--debug-unknowns` CLI flag (`crates/agx-core/src/debug_unknowns.rs`)
 - [x] Per-format scanners report unknown top-level types, payload types,
       and content-item types to stderr, with line-number samples
 - [x] Zero new deps, zero runtime cost when the flag is off
@@ -222,7 +222,7 @@ tokens + cost are prerequisites for the corpus analytics in Phase 3.
       from each assistant message (avoids double-counting in corpus sums)
 
 **1.2 — Cost tables** ✅
-- [x] `src/pricing.rs` with hardcoded per-model USD-per-1M-token prices
+- [x] `crates/agx-core/src/pricing.rs` with hardcoded per-model USD-per-1M-token prices
       for opus-4-6, sonnet-4-6, haiku-4-5, gpt-5, gpt-5-mini,
       gemini-2-5-pro, gemini-2-5-flash
 - [x] `Step::cost_usd()` computed from tokens × model rate; returns `None`
@@ -299,7 +299,7 @@ biggest leverage point in the roadmap.
 ### Subplans
 
 **2.1 — OTel GenAI (JSON export)** ✅
-- [x] `src/otel_json.rs` parser for OpenTelemetry `traces.json` exports
+- [x] `crates/agx-core/src/otel_json.rs` parser for OpenTelemetry `traces.json` exports
       (OTLP-JSON envelope: `resourceSpans` → `scopeSpans` → `spans`)
 - [x] Map GenAI semconv attributes → `Step`: `gen_ai.request.model` →
       model, `gen_ai.usage.input_tokens` / `.output_tokens` /
@@ -331,7 +331,7 @@ biggest leverage point in the roadmap.
       behind a flag per our dep discipline — also skips the originally
       planned `opentelemetry-proto` dep by hand-writing a minimal
       prost schema, keeping the feature-on build lean)
-- [x] `src/otel_proto.rs` decodes binary `.pb` / `.otlp` files — stub
+- [x] `crates/agx-core/src/otel_proto.rs` decodes binary `.pb` / `.otlp` files — stub
       function when the feature is off, real prost-backed parser when
       on; both behind the same `load(path) -> Result<Vec<Step>>` API
 - [x] When the feature is off, a non-UTF-8 file prints a helpful error
@@ -356,7 +356,7 @@ biggest leverage point in the roadmap.
       feature on = 178 unit (+5 for the protobuf path)
 
 **2.3 — LangChain / LangSmith export** ✅
-- [x] `src/langchain.rs` parser for LangSmith's single-JSON "export run"
+- [x] `crates/agx-core/src/langchain.rs` parser for LangSmith's single-JSON "export run"
       shape — a tree of `Run` objects linked by `child_runs` and walked in
       chronological order via `start_time`
 - [x] Run-type mapping:
@@ -397,7 +397,7 @@ biggest leverage point in the roadmap.
       wire up when a real fixture lands in `tests/corpus/langchain/`
 
 **2.4 — Vercel AI SDK traces** ✅
-- [x] `src/vercel_ai.rs` parser for `generateText` / `streamText` saved
+- [x] `crates/agx-core/src/vercel_ai.rs` parser for `generateText` / `streamText` saved
       result objects (the shape most backends actually serialize to disk)
 - [x] Walks `steps[]` when present (multi-step agent loops) — per-step
       usage + model attach to each step's first emitted timeline row;
@@ -674,7 +674,7 @@ diff, deeper search, and notes that survive session edits.
 ### Subplans
 
 **4.1 — Interactive side-by-side diff** ✅
-- [x] Pure-algorithm alignment module (`src/diff_align.rs`) —
+- [x] Pure-algorithm alignment module (`crates/agx-core/src/diff_align.rs`) —
       longest-common-subsequence over a structural `Sig` (step kind +
       tool name), no TUI deps. O(N·M) DP with backtrack. 10 unit
       tests.
@@ -709,7 +709,7 @@ diff, deeper search, and notes that survive session edits.
       single-session TUI on either side.
 
 **4.2 — Jump-to-time + trim** ✅
-- [x] `src/slice.rs` — pure parser + slicer module. Duration grammar
+- [x] `crates/agx-core/src/slice.rs` — pure parser + slicer module. Duration grammar
       supports `30s` / `5m` / `2h` / `1d`, compounds like `1h30m`,
       long-form units (`minutes`, `hours`, ...), case-insensitive,
       and a bare-integer-as-seconds convenience. 7 unit tests.
@@ -897,7 +897,7 @@ lean into MCP as the tool-call metadata layer matures.
       a user sets either flag on a feature-off build, main.rs prints
       a one-time stderr hint telling them exactly how to rebuild
       (same posture as semantic-search feature-off).
-- [x] `src/notify.rs` module mirrors the `semantic.rs` pattern:
+- [x] `crates/agx-core/src/notify.rs` module mirrors the `semantic.rs` pattern:
       `pub fn error(label)` and `pub fn idle(duration_s)` that are
       no-ops without the feature and thin `notify-rust` wrappers with
       it. TUI event loop never needs `cfg!` checks.
@@ -1105,7 +1105,7 @@ CLI agent." Prior roadmap had nothing for it.
       snippet + up to 3 step indices + "how to redact" hint).
       Exit 0 whether or not matches — the dataset-prep workflow is
       iterative (scan → redact → re-scan).
-- [x] `src/pii.rs` is a new module with `scan(text) -> Vec<Match>` /
+- [x] `crates/agx-core/src/pii.rs` is a new module with `scan(text) -> Vec<Match>` /
       `scan_steps(steps) -> Vec<Match>` public API. Zero new deps:
       all patterns are prefix-based byte scans, no `regex` crate.
       Keeps default binary lean (<5MB) and avoids a ~500KB runtime

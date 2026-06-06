@@ -1,6 +1,8 @@
-# agx Roadmap
+# agx Roadmap (Historical — April 2026 pre-release plan)
 
-Decided 2026-04-11. This roadmap is the binding scope for v1.0 pre-public-release. Anything not on this list is parked until after validation.
+> **⚠️ Superseded.** This document was the binding scope for the v1.0 pre-release validation gate (April 2026). The project has since shipped v0.2.0 with features far beyond this scope. For the current roadmap with phase-by-phase status, see [/ROADMAP.md](/ROADMAP.md).
+
+Decided 2026-04-11. This roadmap was the binding scope for v1.0 pre-public-release. Preserved as historical context.
 
 ## Goal
 

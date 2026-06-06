@@ -27,7 +27,7 @@ These three must pass cleanly. CI will reject PRs that don't.
 In rough priority order:
 
 1. **Anonymized session fixtures** for formats that already exist (Claude
-   Code, Codex, Gemini, generic). The more variety we have in
+   Code, Codex, Gemini, generic, LangChain, Vercel AI SDK, OTel). The more variety we have in
    `tests/corpus/`, the harder it is for format drift to break things
    silently. See "Contributing fixtures" below.
 2. **New format parsers** (Aider, Cline, Cursor, Windsurf, etc). See
@@ -41,8 +41,9 @@ What we generally don't want:
 
 - Hosted components (telemetry, cloud sync, web UI). agx is terminal-native
   by design — see the "Not to Do" section in CLAUDE.md.
-- Heavy new dependencies. Each new crate has to justify its weight against
-  the current ~8-dep baseline.
+- Heavy new dependencies. Each new crate has to justify its weight.
+  Optional heavy deps (`prost`, `fastembed`, `notify-rust`) must sit behind
+  a Cargo feature flag that's off by default.
 - Refactors-for-cleanliness without a concrete user-visible benefit.
 - Speculative architecture changes (e.g. unifying parsers behind a shared
   Entry trait — explicitly avoided, see CLAUDE.md).
@@ -55,23 +56,24 @@ unification.
 
 Step-by-step:
 
-1. Create `src/<format>.rs` with format-specific deserialize types
-   (use `serde_json::Value` for fields you don't care about).
+1. Create `crates/agx-core/src/<format>.rs` with format-specific
+   deserialize types (use `serde_json::Value` for fields you don't care
+   about). Parser modules live in the `agx-core` crate.
 2. Define `pub fn load(path: &Path) -> Result<Vec<Step>>`. This is the
    only required public function — same shape as `codex::load` and
    `gemini::load`.
-3. Build steps via the shared helpers in `timeline.rs`:
+3. Build steps via the shared helpers in `crates/agx-core/src/timeline.rs`:
    `user_text_step`, `assistant_text_step`, `tool_use_step`,
    `tool_result_step`. Don't define your own Step constructors — uniformity
    happens at the `Step` level so the TUI renders every format identically.
 4. Pair tool calls with their results inside your parser. Each format does
    this differently (Claude Code's `tool_use_id`, Codex's `call_id`,
    Gemini's atomic `toolCall`); your parser owns the pairing logic.
-5. Add a variant to `Format` in `src/format.rs` and extend `format::detect`
-   with a content-shape check that identifies your format unambiguously.
-   Detection is by JSON shape, **not** file extension.
-6. Extend `main.rs::load_session` with a match arm dispatching to your new
-   parser.
+5. Add a variant to `Format` in `crates/agx-core/src/format.rs` and extend
+   `format::detect` with a content-shape check that identifies your format
+   unambiguously. Detection is by JSON shape, **not** file extension.
+6. Re-export your module from `crates/agx-core/src/lib.rs` and add a
+   match arm in `src/main.rs::load_session` dispatching to your new parser.
 7. Add a synthetic fixture under `assets/sample_<format>_session.<ext>`
    following the same pattern as the others — obviously-fake UUIDs,
    generic content, **zero personal data**.

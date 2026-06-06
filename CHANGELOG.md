@@ -47,7 +47,7 @@ cargo install agx-tui && agx --help
 
 ### Added — Tooling & Suite Integration
 
-- **`agx-mcp`** — Model Context Protocol server exposing `agx_load_session`, `agx_search_steps`, `agx_summarize`, and `agx_list_annotations` so AI agents can introspect their own running session. See [`docs/mcp-integration.md`](docs/mcp-integration.md) for the typed tool surface.
+- **`agx-mcp`** — Model Context Protocol server exposing `agx_session_summary`, `agx_recent_errors`, `agx_tool_distribution`, `agx_scan_pii`, `agx_search`, and `agx_list_annotations` so AI agents can introspect their own running session. See [`docs/mcp-integration.md`](docs/mcp-integration.md) for the typed tool surface.
 - **`agx doctor`** — stepwise-suite health check subcommand. Reports installed siblings (rgx, sift), their versions, and the agx side of the shared CLI grammar.
 - **`docs/agent-guide.md`** — natural-language cookbook for AI coding assistants operating agx on a user's behalf.
 - **`docs/suite-conventions.md`** — shared CLI grammar / TUI keybindings / color palette / integration contracts for the stepwise suite. Maintained verbatim against the copies in rgx and sift.

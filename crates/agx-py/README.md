@@ -1,4 +1,4 @@
-# agx
+# agx-py
 
 Python bindings for [agx-core](../agx-core/README.md) — load and
 inspect AI agent traces (Claude Code, Codex, Gemini, Generic OpenAI,
