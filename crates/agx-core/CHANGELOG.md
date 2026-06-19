@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.1] - 2026-06-19
+
+### Bug Fixes
+
+- *(pricing)* Add claude-opus-4-8 rate
+agx_session_summary reported cost_usd:null for the current flagship model
+  because it was missing from the exact-match pricing table.
+
+### Refactoring
+
+- *(pii)* Inline single-use snippet_around helper
+The helper was just text[start..end].to_string(); its doc promised
+  caller-side wrapping/truncation that never materialized. Inline at both
+  call sites and drop the indirection.
+- *(corpus)* Extract rate() helper for trajectory stats
+Consolidates three identical count-as-f64 / session_count blocks and their
+  three separate cast_precision_loss allows into one private helper. Callers
+  early-return on an empty corpus, so total is always >= 1.
+
+
 ## [0.1.0] - 2026-05-23
 
 ### Bug Fixes

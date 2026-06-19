@@ -20,7 +20,7 @@ doc = false
 
 [dependencies]
 # Pure agx-core — no ratatui / crossterm / arboard.
-agx-core = { path = "../agx-core", version = "0.2.0" }
+agx-core = { path = "../agx-core", version = "0.2.1" }
 # PyO3 extension API. `extension-module` means "build a Python
 # extension, not a linkable lib"; `abi3` targets a stable ABI so one
 # wheel runs on any Python ≥ 3.10.
