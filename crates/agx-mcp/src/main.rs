@@ -34,7 +34,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
-use std::sync::OnceLock;
 use std::time::SystemTime;
 
 use agx_core::timeline::Step;
@@ -205,16 +204,15 @@ struct StepCache {
     mtime: SystemTime,
     steps: Vec<Step>,
 }
-static CACHE: OnceLock<std::sync::Mutex<Option<StepCache>>> = OnceLock::new();
+static CACHE: std::sync::Mutex<Option<StepCache>> = std::sync::Mutex::new(None);
 
 fn load_cached(session: &std::path::Path) -> Result<Vec<Step>> {
     let current_mtime = std::fs::metadata(session)
         .with_context(|| format!("stat {}", session.display()))?
         .modified()
         .unwrap_or(SystemTime::UNIX_EPOCH);
-    let cell = CACHE.get_or_init(|| std::sync::Mutex::new(None));
     {
-        let guard = cell.lock().expect("cache mutex poisoned");
+        let guard = CACHE.lock().expect("cache mutex poisoned");
         if let Some(cache) = guard.as_ref()
             && cache.mtime == current_mtime
         {
@@ -222,11 +220,11 @@ fn load_cached(session: &std::path::Path) -> Result<Vec<Step>> {
         }
     }
     // Cache miss — parse and install. Hold the lock only while
-    // updating the cell; the parse happens without the lock so a
+    // updating the cache; the parse happens without the lock so a
     // slow parse doesn't stall a concurrent reader.
     let steps = agx_core::loader::load_session(session)
         .with_context(|| format!("loading session {}", session.display()))?;
-    if let Ok(mut guard) = cell.lock() {
+    if let Ok(mut guard) = CACHE.lock() {
         *guard = Some(StepCache {
             mtime: current_mtime,
             steps: steps.clone(),
