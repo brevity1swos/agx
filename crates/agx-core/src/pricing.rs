@@ -46,6 +46,15 @@ pub struct ModelPricing {
 // Rates below are ESTIMATES. Treat cost output as a ballpark until a
 // maintainer verifies against the current pricing page.
 const PRICES: &[ModelPricing] = &[
+    // --- Anthropic Claude 4.8 family ---
+    ModelPricing {
+        name: "claude-opus-4-8",
+        input_per_mtoken: 15.0,
+        output_per_mtoken: 75.0,
+        cache_read_per_mtoken: Some(1.50),
+        cache_create_per_mtoken: Some(18.75),
+        last_verified: "2026-06-19 (estimate; unverified)",
+    },
     // --- Anthropic Claude 4.6 family ---
     ModelPricing {
         name: "claude-opus-4-6",
@@ -247,5 +256,20 @@ mod tests {
         for p in PRICES {
             assert!(seen.insert(p.name), "duplicate pricing entry: {}", p.name);
         }
+    }
+
+    #[test]
+    fn claude_opus_4_8_is_priced() {
+        // Regression: agx_session_summary returned cost_usd:null for the
+        // current flagship because this row was missing.
+        let c = cost_usd(
+            Some("claude-opus-4-8"),
+            Some(1_000_000),
+            Some(1_000_000),
+            None,
+            None,
+        )
+        .expect("claude-opus-4-8 must be in the pricing table");
+        assert!((c - 90.0).abs() < 1e-6, "expected 90.0, got {c}");
     }
 }
