@@ -462,6 +462,15 @@ pub struct TrajectoryStats {
 /// Pure function — the render step takes the output and prints
 /// separately. Extracted so tests can assert on the stats struct
 /// without spinning up a full run.
+/// Fraction of sessions matching a predicate, as `n / total`. Callers
+/// guarantee `total >= 1` (they early-return on an empty corpus), so the
+/// division never produces NaN. Consolidates the per-rate cast suppression
+/// into one place.
+#[allow(clippy::cast_precision_loss)]
+fn rate(n: usize, total: usize) -> f64 {
+    n as f64 / total as f64
+}
+
 pub fn compute_trajectory_stats(parsed: &[ParsedSession]) -> TrajectoryStats {
     let session_count = parsed.len();
     if session_count == 0 {
@@ -474,18 +483,21 @@ pub fn compute_trajectory_stats(parsed: &[ParsedSession]) -> TrajectoryStats {
         .collect();
     let tokens_in: Vec<u64> = parsed.iter().map(|p| p.totals.tokens_in).collect();
     let tokens_out: Vec<u64> = parsed.iter().map(|p| p.totals.tokens_out).collect();
-    #[allow(clippy::cast_precision_loss)]
-    let branched =
-        parsed.iter().filter(|p| p.fork_root_count > 0).count() as f64 / session_count as f64;
-    #[allow(clippy::cast_precision_loss)]
-    let annotated =
-        parsed.iter().filter(|p| p.annotation_count > 0).count() as f64 / session_count as f64;
-    #[allow(clippy::cast_precision_loss)]
-    let errored = parsed
-        .iter()
-        .filter(|p| p.tool_stats.iter().any(|t| t.error_count > 0))
-        .count() as f64
-        / session_count as f64;
+    let branched = rate(
+        parsed.iter().filter(|p| p.fork_root_count > 0).count(),
+        session_count,
+    );
+    let annotated = rate(
+        parsed.iter().filter(|p| p.annotation_count > 0).count(),
+        session_count,
+    );
+    let errored = rate(
+        parsed
+            .iter()
+            .filter(|p| p.tool_stats.iter().any(|t| t.error_count > 0))
+            .count(),
+        session_count,
+    );
     TrajectoryStats {
         session_count,
         steps_per_session: Distribution::from_values(&steps),
