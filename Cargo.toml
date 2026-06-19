@@ -23,7 +23,7 @@ repository = "https://github.com/brevity1swos/agx"
 # below — so `cargo install agx-tui && agx --help` is the install
 # UX.
 name = "agx-tui"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 rust-version = "1.85"
 description = "Step-through debugger for your agent — terminal-native session timeline viewer for Claude Code, Codex, Gemini, LangChain, Vercel AI SDK, and OpenTelemetry GenAI traces"
@@ -66,7 +66,7 @@ notifications = ["agx-core/notifications"]
 # Pure parsers + timeline + corpus aggregation live in agx-core.
 # The feature flags above pass through so this crate's callers only
 # need to flip them on `agx` (the bin), not on `agx-core` directly.
-agx-core = { path = "crates/agx-core", version = "0.2.0" }
+agx-core = { path = "crates/agx-core", version = "0.2.1" }
 # TUI layer — ratatui + crossterm + arboard. These are the deps
 # that justify keeping agx-core separate: they're irrelevant to
 # anyone driving the parsers from Python / WASM / custom tooling.

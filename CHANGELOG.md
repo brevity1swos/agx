@@ -6,6 +6,43 @@ Stability commitments — which fields, flags, and APIs will or won't change acr
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-06-19
+
+### Bug Fixes
+
+- *(pricing)* Add claude-opus-4-8 rate
+agx_session_summary reported cost_usd:null for the current flagship model
+  because it was missing from the exact-match pricing table.
+
+### Documentation
+
+- Sync docs with shipped workspace layout and 8-format support
+Correct stale references left over from the workspace split and the
+  format-parser expansion:
+
+  - src/ paths → crates/agx-core/src/ (parsers now live in agx-core)
+  - format count 5 → 8 (adds LangChain/LangSmith, Vercel AI SDK, and
+    OTel binary protobuf)
+  - corrected agx-mcp tool names in CHANGELOG (agx_session_summary,
+    agx_recent_errors, agx_tool_distribution, agx_scan_pii, agx_search)
+  - expanded keybinding reference and dep-discipline wording
+
+  No code changes. Plain docs: prefix keeps release-plz's release_commits
+  filter from firing.
+
+### Refactoring
+
+- *(pii)* Inline single-use snippet_around helper
+The helper was just text[start..end].to_string(); its doc promised
+  caller-side wrapping/truncation that never materialized. Inline at both
+  call sites and drop the indirection.
+- *(corpus)* Extract rate() helper for trajectory stats
+Consolidates three identical count-as-f64 / session_count blocks and their
+  three separate cast_precision_loss allows into one private helper. Callers
+  early-return on an empty corpus, so total is always >= 1.
+- *(mcp)* Use const-initialized Mutex for the step cache
+
+
 ## [0.2.0] - 2026-05-23
 
 The substance release. Adds two more agent-trace formats (LangChain, Vercel AI SDK), full OpenTelemetry GenAI support, fork / branch detection, jump-to-step launch positioning, desktop notifications for live mode, trajectory export for RL training data, corpus-level distributional stats, PII / credential scanning, an experimental shell-replay subsystem with triple-gate safety, a workspace split with publish-ready Python (PyPI) / WASM (npm) bindings, formal stability commitments, an MCP server for agent self-introspection, and an `agx doctor` health-check subcommand.
