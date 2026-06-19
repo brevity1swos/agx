@@ -179,7 +179,7 @@ fn scan_prefix(
             }
             if tail >= min_tail {
                 let end = tail_start + tail;
-                let snippet = snippet_around(text, i, end);
+                let snippet = text[i..end].to_string();
                 out.push(Match {
                     category: cat,
                     step_index,
@@ -214,7 +214,7 @@ fn scan_openai_key(text: &str, step_index: usize, out: &mut Vec<Match>) {
                 out.push(Match {
                     category: Category::OpenaiKey,
                     step_index,
-                    snippet: snippet_around(text, i, end),
+                    snippet: text[i..end].to_string(),
                 });
                 i = end;
                 continue;
@@ -369,13 +369,6 @@ fn parse_jwt_at(bytes: &[u8], start: usize) -> Option<usize> {
 
 fn is_base64url_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_' || b == b'-'
-}
-
-fn snippet_around(text: &str, start: usize, end: usize) -> String {
-    // Return the matched range directly. Callers can wrap in `…` or
-    // truncate if they want more context; keeping this tight means
-    // JSON output stays small.
-    text[start..end].to_string()
 }
 
 #[cfg(test)]
