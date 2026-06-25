@@ -29,16 +29,14 @@ the honest hook anyway.
 
 ---
 
-## Pre-launch checklist (do these first)
+## Pre-launch checklist
 
-1. **Generate `assets/preview.png`** — Terminal Trove wants a still image; agx
-   only ships `assets/demo.gif`. Crop one clean frame (a `[result]` step showing
-   the paired tool-call input + response — that's the differentiator) the same
-   way rxray's `preview.png` was made. Commit under `chore:`.
-2. **Set the repo homepage** to `https://docs.rs/agx-core` (currently unset) —
-   `gh repo edit brevity1swos/agx --homepage https://docs.rs/agx-core`.
-3. **Verify asset URLs return 200** before any submission:
-   `https://raw.githubusercontent.com/brevity1swos/agx/main/assets/demo.gif`.
+1. ~~**Generate `assets/preview.png`**~~ — **DONE** (2026-06-24). 1400×800 still
+   cropped from the demo (3-pane timeline + token/cost detail), committed.
+2. ~~**Set the repo homepage** to `https://docs.rs/agx-core`~~ — **DONE** (2026-06-24).
+3. **Verify asset URLs return 200** before each submission (raw.githubusercontent
+   propagation lags a push by a minute or two):
+   `https://raw.githubusercontent.com/brevity1swos/agx/main/assets/{preview.png,demo.gif}`.
 
 > Launch-doc commits use the `chore:` prefix so they stay out of the release-plz
 > changelog (see the launch-commit-prefix convention).

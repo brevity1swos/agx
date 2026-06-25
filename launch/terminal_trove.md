@@ -4,8 +4,8 @@ Submit via https://terminaltrove.com/submit (curated form, no hard star bar;
 rgx is already listed, so the channel is warm). Fields below map 1:1 to the
 submission form; description fields respect the form's character limits.
 
-> **Blocker:** generate `assets/preview.png` first (a cropped demo frame). The
-> form's image field expects a still; agx currently ships only `demo.gif`.
+> Image assets are ready: `assets/preview.png` (1400×800 still) and
+> `assets/demo.gif` are both committed and serve over raw.githubusercontent.
 
 ## Basic Info
 
@@ -38,7 +38,7 @@ submission form; description fields respect the form's character limits.
 
 | Field | URL |
 |-------|-----|
-| PNG | https://raw.githubusercontent.com/brevity1swos/agx/main/assets/preview.png  *(generate first)* |
+| PNG | https://raw.githubusercontent.com/brevity1swos/agx/main/assets/preview.png |
 | GIF | https://raw.githubusercontent.com/brevity1swos/agx/main/assets/demo.gif |
 
 ## Categories (select all that apply)
