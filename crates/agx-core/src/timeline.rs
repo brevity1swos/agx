@@ -714,6 +714,19 @@ fn collect_tool_meta(entries: &[Entry]) -> HashMap<String, ToolMeta> {
     map
 }
 
+/// `deserialize_with` helper: treat an explicit JSON `null` like a missing
+/// key. `#[serde(default)]` alone only covers absent keys, and many SDK
+/// dumps write `null` for empty lists / strings. Pair with
+/// `#[serde(default)]` so the absent-key case still works.
+pub(crate) fn null_as_default<'de, D, T>(d: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Default + serde::Deserialize<'de>,
+{
+    use serde::Deserialize;
+    Ok(Option::<T>::deserialize(d)?.unwrap_or_default())
+}
+
 pub(crate) fn pretty_json<T: serde::Serialize>(value: &T) -> String {
     serde_json::to_string_pretty(value).unwrap_or_default()
 }
