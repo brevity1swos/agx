@@ -75,6 +75,12 @@ pub struct AssistantEntry {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AssistantMessage {
+    /// API response id (e.g. "msg_01..."). Claude Code writes one JSONL
+    /// line per content block, and every line from the same response
+    /// repeats this id along with the full `usage` — `timeline::build`
+    /// uses it to attach usage only once per response.
+    #[serde(default)]
+    pub id: Option<String>,
     #[allow(dead_code)]
     pub role: String,
     pub content: Vec<AssistantContentItem>,
