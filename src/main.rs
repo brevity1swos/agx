@@ -85,7 +85,8 @@ struct Cli {
     /// match is replaced with `[REDACTED]`. Useful before publishing
     /// trajectories as a training dataset — strip API keys, paths,
     /// usernames that crept into shell output. Applies to every
-    /// `--export` format.
+    /// `--export` format, including tool names, model names, tool-call
+    /// IDs, and annotation text.
     #[arg(long, value_name = "NEEDLE")]
     redact: Vec<String>,
 
