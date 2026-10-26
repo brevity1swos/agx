@@ -171,6 +171,7 @@ pub(crate) fn execute_shell_with_limits(
     let mut cmd = Command::new("/bin/sh");
     cmd.arg("-c")
         .arg(input)
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     // On Unix, put the shell in its own process group so deadline
@@ -185,6 +186,10 @@ pub(crate) fn execute_shell_with_limits(
     cmd.process_group(0);
     let mut child = cmd.spawn().context("spawning /bin/sh for replay")?;
 
+    // stdin is `/dev/null` rather than inherited: the TUI owns the
+    // terminal in raw mode, so an inherited stdin would let a
+    // replayed `cat` / `read` block on (and swallow) keystrokes.
+    //
     // Read each stream on its own thread with a byte cap. `take(N)`
     // wraps the ChildStdout in `io::Take`; when that wrapper is
     // dropped the underlying pipe closes, which sends SIGPIPE to
@@ -552,6 +557,16 @@ mod tests {
             elapsed < 5,
             "killed near the deadline, not 60s: elapsed={elapsed}s"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn execute_shell_child_does_not_inherit_stdin() {
+        // `cat` with an inherited TTY stdin would block (or steal the
+        // TUI's keystrokes); with /dev/null it sees EOF immediately.
+        let out = execute_shell_with_limits("cat; echo done", 2, 1024).expect("shell runs");
+        assert!(!out.timed_out, "cat saw EOF instead of blocking");
+        assert_eq!(out.stdout, "done\n");
     }
 
     #[test]
