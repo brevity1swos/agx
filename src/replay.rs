@@ -34,6 +34,7 @@ use std::io::{Read, Write};
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -55,6 +56,12 @@ const DEFAULT_TIMEOUT_SECS: u64 = 30;
 /// Poll interval while waiting for the child. 50ms is a good
 /// balance between responsiveness and wasted wakeups.
 const POLL_INTERVAL_MS: u64 = 50;
+
+/// How long readers get to hit EOF after the shell exits before the
+/// rest of its process group is killed. Output the shell itself
+/// wrote is already in the pipe, so this only needs to cover the
+/// drain, not further work by backgrounded grandchildren.
+const POST_EXIT_GRACE_MS: u64 = 500;
 
 /// Runtime configuration derived from the top-level CLI flags.
 /// Default is all-off — `--experimental-replay` is the opt-in.
@@ -198,8 +205,16 @@ pub(crate) fn execute_shell_with_limits(
     let stdout_h = child.stdout.take().context("replay child stdout handle")?;
     let stderr_h = child.stderr.take().context("replay child stderr handle")?;
     let cap = max_capture_bytes;
-    let t_out = thread::spawn(move || read_capped(stdout_h, cap));
-    let t_err = thread::spawn(move || read_capped(stderr_h, cap));
+    // Readers report over channels instead of being joined so the
+    // wait below can be bounded — see the post-exit drain.
+    let (out_tx, out_rx) = mpsc::channel();
+    let (err_tx, err_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = out_tx.send(read_capped(stdout_h, cap));
+    });
+    thread::spawn(move || {
+        let _ = err_tx.send(read_capped(stderr_h, cap));
+    });
 
     // Poll `try_wait` with a short sleep until the child exits or
     // we hit the wall-clock deadline. `std::process::Child` doesn't
@@ -219,8 +234,28 @@ pub(crate) fn execute_shell_with_limits(
         }
     };
 
-    let (out_bytes, stdout_truncated) = t_out.join().unwrap_or_else(|_| (Vec::new(), false));
-    let (err_bytes, stderr_truncated) = t_err.join().unwrap_or_else(|_| (Vec::new(), false));
+    // The shell has exited, but a backgrounded grandchild (`sleep 30
+    // &`) can still hold the write ends of both pipes, so EOF may
+    // never come on its own. Give the readers a short grace to drain
+    // what the shell wrote, then kill the rest of the process group
+    // (the PGID outlives the reaped leader while members remain) and
+    // collect whatever was captured. The final recv is bounded too:
+    // a grandchild that escaped the group (`setsid`) — or any
+    // grandchild on non-Unix — just gets its reader thread detached.
+    let grace_end = std::cmp::min(
+        deadline,
+        std::time::Instant::now() + Duration::from_millis(POST_EXIT_GRACE_MS),
+    );
+    let mut out_res = recv_until(&out_rx, grace_end);
+    let mut err_res = recv_until(&err_rx, grace_end);
+    if out_res.is_none() || err_res.is_none() {
+        kill_process_group(&mut child);
+        let drain_end = std::time::Instant::now() + Duration::from_millis(POST_EXIT_GRACE_MS);
+        out_res = out_res.or_else(|| recv_until(&out_rx, drain_end));
+        err_res = err_res.or_else(|| recv_until(&err_rx, drain_end));
+    }
+    let (out_bytes, stdout_truncated) = out_res.unwrap_or_default();
+    let (err_bytes, stderr_truncated) = err_res.unwrap_or_default();
     let duration_ms = start.elapsed().as_millis();
 
     Ok(ReplayOutput {
@@ -234,8 +269,18 @@ pub(crate) fn execute_shell_with_limits(
     })
 }
 
+/// Wait for a reader thread's result until `until`. `None` means the
+/// reader is still blocked (or panicked and dropped its sender).
+fn recv_until<T>(rx: &mpsc::Receiver<T>, until: std::time::Instant) -> Option<T> {
+    let wait = until.saturating_duration_since(std::time::Instant::now());
+    rx.recv_timeout(wait).ok()
+}
+
 /// Kill the replay child and (on Unix) every other process in
-/// its process group. Used when the wall-clock deadline fires.
+/// its process group. Used when the wall-clock deadline fires, and
+/// after a normal exit when a backgrounded grandchild still holds
+/// the capture pipes. Never calls `wait`, so it is safe on an
+/// already-reaped leader.
 ///
 /// On Unix the shell is spawned via `process_group(0)`, so its
 /// PID is its PGID. `kill(-pgid, SIGKILL)` reaches the shell and
@@ -557,6 +602,21 @@ mod tests {
             elapsed < 5,
             "killed near the deadline, not 60s: elapsed={elapsed}s"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn execute_shell_returns_when_background_grandchild_holds_pipes() {
+        // The shell exits immediately, but the backgrounded `sleep`
+        // inherits stdout/stderr and keeps the write ends open. The
+        // reader joins must not wait the full 30s for it.
+        let start = std::time::Instant::now();
+        let out = execute_shell_with_limits("echo hi; sleep 30 &", 2, 1024).expect("shell runs");
+        let elapsed = start.elapsed().as_secs();
+        assert_eq!(out.stdout, "hi\n");
+        assert_eq!(out.exit_code, Some(0));
+        assert!(!out.timed_out, "shell itself exited normally");
+        assert!(elapsed < 5, "returned promptly: elapsed={elapsed}s");
     }
 
     #[cfg(unix)]
