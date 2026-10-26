@@ -1,6 +1,6 @@
 [package]
 name = "agx-py"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 rust-version = "1.88"
 description = "Python bindings for agx-core — load and inspect AI agent traces (Claude Code, Codex, Gemini, OTel, LangChain, Vercel AI SDK) from Python."

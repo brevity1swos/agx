@@ -3,7 +3,9 @@ requires = ["maturin>=1.7,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "agx"
+# Distribution name. The bare `agx` on PyPI belongs to an unrelated
+# project; the import name stays `agx` (see module-name below).
+name = "agx-py"
 description = "Python bindings for agx-core — load and inspect AI agent traces from Python."
 requires-python = ">=3.10"
 license = { text = "MIT OR Apache-2.0" }
