@@ -408,6 +408,8 @@ fn handle_line(line: &str, session: &std::path::Path) -> Option<Response> {
 
     Some(match method {
         "initialize" => handle_initialize(id),
+        // MCP liveness check: the spec mandates an empty result.
+        "ping" => ok(id, json!({})),
         "tools/list" => handle_tools_list(id),
         "tools/call" => handle_tools_call(id, params, session),
         other => err(id, -32601, format!("unknown method `{other}`")),
@@ -493,6 +495,13 @@ mod tests {
         let r = reply(r#"{"jsonrpc":"1.0","id":"a","method":"tools/list"}"#).expect("reply");
         assert_eq!(error_code(&r), -32600);
         assert_eq!(r["id"], json!("a"));
+    }
+
+    #[test]
+    fn ping_returns_empty_result() {
+        let r = reply(r#"{"jsonrpc":"2.0","id":3,"method":"ping"}"#).expect("reply");
+        assert_eq!(r["result"], json!({}));
+        assert!(r.get("error").is_none());
     }
 
     #[test]
