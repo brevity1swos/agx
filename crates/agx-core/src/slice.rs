@@ -62,7 +62,9 @@ pub fn parse_duration_ms(raw: &str) -> Result<u64> {
     }
     // Bare integer → seconds.
     if let Ok(n) = s.parse::<u64>() {
-        return Ok(n * 1_000);
+        return n
+            .checked_mul(1_000)
+            .ok_or_else(|| anyhow!("duration overflowed u64"));
     }
     let mut total_ms: u64 = 0;
     let mut num_buf = String::new();
@@ -245,6 +247,21 @@ pub fn warn_if_time_filter_ignored(steps: &[Step], after_ms: Option<u64>, before
 mod tests {
     use super::*;
     use crate::timeline::{assistant_text_step, user_text_step};
+
+    #[test]
+    fn parse_duration_bare_integer_overflow_is_an_error() {
+        assert!(parse_duration_ms("18446744073709552").is_err());
+    }
+
+    #[test]
+    fn slice_steps_indexed_reports_original_indices() {
+        let steps: Vec<Step> = (0..6).map(|i| user_text_step(&format!("s{i}"))).collect();
+        let range = parse_step_range("2..5").unwrap();
+        let (sliced, map) = slice_steps_indexed(steps, &range, None, None);
+        assert_eq!(sliced.len(), map.len());
+        assert!(sliced[0].detail.contains(&format!("s{}", map[0])));
+        assert!(map.windows(2).all(|w| w[0] < w[1]));
+    }
 
     #[test]
     fn parse_duration_basic_units() {
