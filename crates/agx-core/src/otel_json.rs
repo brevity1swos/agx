@@ -22,8 +22,8 @@
 //! they'll be added in a follow-up if fixtures land in `tests/corpus/`.
 
 use crate::timeline::{
-    Step, Usage, assistant_text_step, attach_usage_to_first, compute_durations, tool_result_step,
-    tool_use_step, user_text_step,
+    Step, Usage, assistant_text_step, attach_usage_to_first, compute_durations, null_as_default,
+    tool_result_step, tool_use_step, user_text_step,
 };
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -32,19 +32,23 @@ use std::path::Path;
 
 #[derive(Debug, Deserialize)]
 struct Envelope {
-    #[serde(default, rename = "resourceSpans")]
+    #[serde(
+        default,
+        rename = "resourceSpans",
+        deserialize_with = "null_as_default"
+    )]
     resource_spans: Vec<ResourceSpans>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ResourceSpans {
-    #[serde(default, rename = "scopeSpans")]
+    #[serde(default, rename = "scopeSpans", deserialize_with = "null_as_default")]
     scope_spans: Vec<ScopeSpans>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ScopeSpans {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     spans: Vec<Span>,
 }
 
@@ -55,10 +59,29 @@ struct Span {
     #[serde(default)]
     #[allow(dead_code)]
     name: String,
-    #[serde(default, rename = "startTimeUnixNano")]
-    start_time_unix_nano: Option<String>,
-    #[serde(default)]
+    #[serde(
+        default,
+        rename = "startTimeUnixNano",
+        deserialize_with = "nanos_from_string_or_number"
+    )]
+    start_time_unix_nano: Option<u64>,
+    #[serde(default, deserialize_with = "null_as_default")]
     attributes: Vec<KeyValue>,
+}
+
+/// OTLP-JSON encodes fixed64 nano timestamps as decimal strings, but
+/// several exporters write plain JSON numbers (or `null`). Accept all
+/// three; anything unparseable degrades to `None` (sorted first) rather
+/// than failing the whole file.
+fn nanos_from_string_or_number<'de, D>(d: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(match serde_json::Value::deserialize(d)? {
+        serde_json::Value::String(s) => s.parse().ok(),
+        serde_json::Value::Number(n) => n.as_u64(),
+        _ => None,
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -80,11 +103,7 @@ pub fn load(path: &Path) -> Result<Vec<Step>> {
     for rs in &envelope.resource_spans {
         for ss in &rs.scope_spans {
             for span in &ss.spans {
-                let ts_ns = span
-                    .start_time_unix_nano
-                    .as_deref()
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .unwrap_or(0);
+                let ts_ns = span.start_time_unix_nano.unwrap_or(0);
                 all_spans.push((span, ts_ns));
             }
         }
@@ -464,6 +483,45 @@ mod tests {
         assert_eq!(steps.len(), 2);
         assert!(steps[0].detail.contains("first"));
         assert!(steps[1].detail.contains("third"));
+    }
+
+    #[test]
+    fn numeric_start_time_unix_nano_is_accepted() {
+        // Some exporters write the nano timestamp as a JSON number (or
+        // null) rather than the OTLP-JSON string form.
+        let json = r#"{
+            "resourceSpans": [{"scopeSpans": [{"spans": [
+                {
+                    "startTimeUnixNano": 3000000000,
+                    "attributes": [
+                        {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+                        {"key": "gen_ai.prompt.0.role", "value": {"stringValue": "user"}},
+                        {"key": "gen_ai.prompt.0.content", "value": {"stringValue": "second"}}
+                    ]
+                },
+                {
+                    "startTimeUnixNano": "1000000000",
+                    "attributes": [
+                        {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+                        {"key": "gen_ai.prompt.0.role", "value": {"stringValue": "user"}},
+                        {"key": "gen_ai.prompt.0.content", "value": {"stringValue": "first"}}
+                    ]
+                },
+                {
+                    "startTimeUnixNano": null,
+                    "attributes": [
+                        {"key": "http.method", "value": {"stringValue": "GET"}}
+                    ]
+                }
+            ]}]}]
+        }"#;
+        let f = write_file(json);
+        let steps = load(f.path()).unwrap();
+        assert_eq!(steps.len(), 2);
+        assert!(steps[0].detail.contains("first"));
+        assert_eq!(steps[0].timestamp_ms, Some(1_000));
+        assert!(steps[1].detail.contains("second"));
+        assert_eq!(steps[1].timestamp_ms, Some(3_000));
     }
 
     #[test]
