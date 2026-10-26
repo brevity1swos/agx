@@ -125,7 +125,7 @@ stepwise suite's shared posture):
    every format identically. No unifying `Entry` trait across formats.
 5. Keep the dep baseline lean. Anything that pulls in heavy crates (SQLite,
    ONNX, protobuf, tokio-full) goes behind a feature flag.
-6. MSRV locked at Rust 1.85 (required by edition 2024) until a Phase bumps it with an explicit note.
+6. MSRV is Rust 1.88 — the floor set by dependencies (ratatui, darling, time, ort); bumps need an explicit note. Checked by the CI `msrv` job.
 7. **Composition over feature bloat.** agx does one thing (session
    timeline viewer); rgx does one thing (regex debugger); sift does one
    thing (AI write review gate). The suite's power is their intersection,
@@ -1361,7 +1361,7 @@ of format support that didn't fit earlier phases.
 - [ ] SemVer commitment: post-v1.0, breaking changes to CLI flags, session
       file expectations, export schemas, or `agx-core` public API require
       a major-version bump
-- [ ] MSRV policy: locked at 1.85 for v1.0 (edition 2024 floor); future
+- [ ] MSRV policy: locked at 1.88 for v1.0 (dependency floor); future
       bumps require a minor bump + CHANGELOG entry
 
 **8.4 — v1.0 release checklist**

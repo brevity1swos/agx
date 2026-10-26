@@ -2,7 +2,7 @@
 name = "agx-py"
 version = "0.2.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 description = "Python bindings for agx-core — load and inspect AI agent traces (Claude Code, Codex, Gemini, OTel, LangChain, Vercel AI SDK) from Python."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/brevity1swos/agx"

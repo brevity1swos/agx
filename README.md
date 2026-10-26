@@ -26,7 +26,7 @@ cargo install agx-tui
 
 The published crate is `agx-tui` (the unqualified `agx` name on crates.io was taken by an unrelated project before this one started); the installed binary is `agx`.
 
-Requires Rust 1.85+ (edition 2024).
+Requires Rust 1.88+.
 
 Binary OTLP (`.pb` / `.otlp`) support is opt-in because `prost` adds meaningful binary size. If you consume protobuf trace files from `opentelemetry-collector`:
 
