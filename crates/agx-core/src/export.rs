@@ -133,14 +133,24 @@ pub fn markdown(
             }
             out.push_str("\n\n");
         }
-        out.push_str("```\n");
+        // Fence must be longer than any backtick run inside the detail,
+        // or a tool output containing ``` closes it early and the rest
+        // renders as live markdown.
+        let fence = "`".repeat(longest_backtick_run(&step.detail).max(2) + 1);
+        out.push_str(&fence);
+        out.push('\n');
         out.push_str(&step.detail);
         if !step.detail.ends_with('\n') {
             out.push('\n');
         }
-        out.push_str("```\n\n");
+        out.push_str(&fence);
+        out.push_str("\n\n");
     }
     out
+}
+
+fn longest_backtick_run(s: &str) -> usize {
+    s.split(|c| c != '`').map(str::len).max().unwrap_or(0)
 }
 
 /// Render a session as self-contained HTML with inline CSS, no JS, no
@@ -401,6 +411,11 @@ pub fn redacted_steps(steps: &[Step], patterns: &[String]) -> Vec<Step> {
             let mut c = s.clone();
             c.label = apply_redactions(&c.label, patterns);
             c.detail = apply_redactions(&c.detail, patterns);
+            // Every string field the exporters serialize — JSON and
+            // trajectory output emit these verbatim.
+            c.tool_name = c.tool_name.map(|t| apply_redactions(&t, patterns));
+            c.model = c.model.map(|m| apply_redactions(&m, patterns));
+            c.tool_call_id = c.tool_call_id.map(|id| apply_redactions(&id, patterns));
             c
         })
         .collect()
@@ -677,6 +692,25 @@ mod tests {
         // every position with [REDACTED][REDACTED]…; skip instead.
         let out = apply_redactions("hello", &[String::new()]);
         assert_eq!(out, "hello");
+    }
+
+    #[test]
+    fn markdown_fence_outlasts_backticks_in_detail() {
+        let mut step = user_text_step("x");
+        step.detail = "before\n```\n# not a heading\n````".into();
+        let out = markdown(&[step], &compute_session_totals(&[]), true, None);
+        assert!(out.contains("`````\nbefore"), "{out}");
+    }
+
+    #[test]
+    fn redacted_steps_masks_tool_name_model_and_call_id() {
+        let mut step = user_text_step("x");
+        step.tool_name = Some("SECRET_tool".into());
+        step.model = Some("m-SECRET".into());
+        step.tool_call_id = Some("id-SECRET".into());
+        let out = redacted_steps(&[step], &["SECRET".into()]);
+        let json = serde_json::to_string(&out).unwrap();
+        assert!(!json.contains("SECRET"), "{json}");
     }
 
     #[test]
