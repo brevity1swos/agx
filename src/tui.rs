@@ -998,8 +998,11 @@ pub fn run(
     replay: crate::replay::ReplayConfig,
 ) -> Result<()> {
     enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
+    // Guard first: if entering the alt screen fails, Drop still
+    // restores cooked mode (leaving a never-entered alt screen is a
+    // no-op).
     let _guard = TerminalGuard;
+    execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
 
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;

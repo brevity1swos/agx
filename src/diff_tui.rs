@@ -145,8 +145,11 @@ pub fn run(
     no_cost: bool,
 ) -> Result<()> {
     enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen)?;
+    // Guard first: if entering the alt screen fails, Drop still
+    // restores cooked mode (leaving a never-entered alt screen is a
+    // no-op).
     let _guard = TerminalGuard;
+    execute!(io::stdout(), EnterAlternateScreen)?;
 
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
