@@ -36,20 +36,22 @@
 //!   test shows duplicates, add a seen-content set.
 
 use crate::timeline::{
-    Step, Usage, assistant_text_step, attach_usage_to_first, compute_durations, parse_iso_ms,
-    pretty_json, tool_result_step, tool_use_step, user_text_step,
+    Step, Usage, assistant_text_step, attach_usage_to_first, compute_durations, null_as_default,
+    parse_iso_ms, pretty_json, tool_result_step, tool_use_step, user_text_step,
 };
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::path::Path;
 
+// String / Vec fields use `null_as_default` because LangSmith exports
+// write explicit `null` for empty values rather than omitting the key.
 #[derive(Debug, Deserialize)]
 struct Run {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     id: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     name: String,
-    #[serde(default, rename = "run_type")]
+    #[serde(default, rename = "run_type", deserialize_with = "null_as_default")]
     run_type: String,
     #[serde(default)]
     start_time: Option<String>,
@@ -59,7 +61,7 @@ struct Run {
     outputs: serde_json::Value,
     #[serde(default)]
     extra: serde_json::Value,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     child_runs: Vec<Run>,
 }
 
@@ -629,5 +631,29 @@ mod tests {
         let steps = load(f.path()).unwrap();
         assert_eq!(steps[1].tokens_in, Some(10));
         assert_eq!(steps[1].tokens_out, Some(20));
+    }
+
+    #[test]
+    fn null_fields_are_tolerated() {
+        // LangSmith exports write `null` for empty child_runs / names
+        // rather than omitting the key.
+        let json = r#"{
+            "id": null,
+            "name": null,
+            "run_type": "chain",
+            "inputs": {"input": "q"},
+            "child_runs": [{
+                "id": "t1",
+                "name": "search",
+                "run_type": "tool",
+                "start_time": "2024-01-01T00:00:01Z",
+                "inputs": {"input": "x"},
+                "outputs": {"output": "y"},
+                "child_runs": null
+            }]
+        }"#;
+        let f = write_file(json);
+        let steps = load(f.path()).unwrap();
+        assert_eq!(steps.len(), 3);
     }
 }
