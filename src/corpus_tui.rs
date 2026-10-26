@@ -644,6 +644,7 @@ mod tests {
             mtime_secs: mtime,
             annotation_count: 0,
             fork_root_count: 0,
+            model_usage: Vec::new(),
         }
     }
 
