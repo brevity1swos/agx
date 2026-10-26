@@ -162,13 +162,17 @@ fn handle_tools_list(id: Value) -> Response {
     ok(id, json!({"tools": tool_list()}))
 }
 
+/// Error shape split per the MCP spec: a malformed call (unknown tool,
+/// bad arguments) is a protocol error (-32602), while a well-formed
+/// call that fails while running (session unreadable, …) is a
+/// *successful* JSON-RPC result flagged `isError: true` so the model
+/// sees the message and can react to it.
 fn handle_tools_call(id: Value, params: Value, session: &std::path::Path) -> Response {
-    let name = params
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default();
-    let args = params.get("arguments").cloned().unwrap_or(json!({}));
-    match run_tool(name, &args, session) {
+    let tool = match parse_tool_call(&params) {
+        Ok(t) => t,
+        Err(msg) => return err(id, -32602, format!("invalid params: {msg}")),
+    };
+    match run_tool(&tool, session) {
         Ok(output) => ok(
             id,
             json!({
@@ -177,8 +181,79 @@ fn handle_tools_call(id: Value, params: Value, session: &std::path::Path) -> Res
                 ]
             }),
         ),
-        Err(e) => err(id, -32603, format!("tool `{name}` failed: {e}")),
+        Err(e) => ok(
+            id,
+            json!({
+                "content": [
+                    {"type": "text", "text": format!("tool `{}` failed: {e:#}", tool.name())}
+                ],
+                "isError": true
+            }),
+        ),
     }
+}
+
+/// A validated `tools/call` request. Built before the session is
+/// touched so bad calls are rejected without paying for a parse.
+#[derive(Debug)]
+enum Tool {
+    SessionSummary,
+    RecentErrors { limit: usize },
+    Distribution,
+    ScanPii,
+    Search { query: String, limit: usize },
+    ListAnnotations,
+}
+
+impl Tool {
+    fn name(&self) -> &'static str {
+        match self {
+            Tool::SessionSummary => "agx_session_summary",
+            Tool::RecentErrors { .. } => "agx_recent_errors",
+            Tool::Distribution => "agx_tool_distribution",
+            Tool::ScanPii => "agx_scan_pii",
+            Tool::Search { .. } => "agx_search",
+            Tool::ListAnnotations => "agx_list_annotations",
+        }
+    }
+}
+
+fn parse_tool_call(params: &Value) -> std::result::Result<Tool, String> {
+    let name = params
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or("missing string field `name`")?;
+    let empty = serde_json::Map::new();
+    let args = match params.get("arguments") {
+        None | Some(Value::Null) => &empty,
+        Some(Value::Object(m)) => m,
+        Some(_) => return Err("`arguments` must be an object".into()),
+    };
+    let limit = |default: usize| -> std::result::Result<usize, String> {
+        match args.get("limit") {
+            None | Some(Value::Null) => Ok(default),
+            Some(v) => v
+                .as_u64()
+                .map(|n| usize::try_from(n).unwrap_or(usize::MAX))
+                .ok_or_else(|| "`limit` must be a non-negative integer".into()),
+        }
+    };
+    Ok(match name {
+        "agx_session_summary" => Tool::SessionSummary,
+        "agx_recent_errors" => Tool::RecentErrors { limit: limit(5)? },
+        "agx_tool_distribution" => Tool::Distribution,
+        "agx_scan_pii" => Tool::ScanPii,
+        "agx_search" => Tool::Search {
+            query: args
+                .get("query")
+                .and_then(Value::as_str)
+                .ok_or("missing string argument `query`")?
+                .to_string(),
+            limit: limit(20)?,
+        },
+        "agx_list_annotations" => Tool::ListAnnotations,
+        other => return Err(format!("unknown tool `{other}`")),
+    })
 }
 
 /// Parse-once cache. MCP clients commonly fire 2–6 tool calls in
@@ -230,10 +305,10 @@ fn load_cached(session: &std::path::Path) -> Result<Vec<Step>> {
 /// that the agent parses on its side. Rendering policy intentionally
 /// leaves formatting decisions to the caller — the server only
 /// produces structured data.
-fn run_tool(name: &str, args: &Value, session: &std::path::Path) -> Result<String> {
+fn run_tool(tool: &Tool, session: &std::path::Path) -> Result<String> {
     let steps = load_cached(session)?;
-    match name {
-        "agx_session_summary" => {
+    match tool {
+        Tool::SessionSummary => {
             let totals = agx_core::timeline::compute_session_totals(&steps);
             let tool_stats = agx_core::timeline::compute_tool_stats(&steps);
             let error_count: usize = tool_stats.iter().map(|t| t.error_count).sum();
@@ -248,14 +323,13 @@ fn run_tool(name: &str, args: &Value, session: &std::path::Path) -> Result<Strin
                 "error_count": error_count,
             }))?)
         }
-        "agx_recent_errors" => {
-            let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+        Tool::RecentErrors { limit } => {
             let errors: Vec<_> = steps
                 .iter()
                 .enumerate()
                 .filter(|(_, s)| agx_core::timeline::is_error_result(s))
                 .rev()
-                .take(limit)
+                .take(*limit)
                 .map(|(i, s)| {
                     json!({
                         "step_index": i,
@@ -266,7 +340,7 @@ fn run_tool(name: &str, args: &Value, session: &std::path::Path) -> Result<Strin
                 .collect();
             Ok(serde_json::to_string(&errors)?)
         }
-        "agx_tool_distribution" => {
+        Tool::Distribution => {
             let tool_stats = agx_core::timeline::compute_tool_stats(&steps);
             let out: Vec<_> = tool_stats
                 .iter()
@@ -280,7 +354,7 @@ fn run_tool(name: &str, args: &Value, session: &std::path::Path) -> Result<Strin
                 .collect();
             Ok(serde_json::to_string(&out)?)
         }
-        "agx_scan_pii" => {
+        Tool::ScanPii => {
             let matches = agx_core::pii::scan_steps(&steps);
             let out: Vec<_> = matches
                 .iter()
@@ -294,12 +368,7 @@ fn run_tool(name: &str, args: &Value, session: &std::path::Path) -> Result<Strin
                 .collect();
             Ok(serde_json::to_string(&out)?)
         }
-        "agx_search" => {
-            let query = args
-                .get("query")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default();
-            let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
+        Tool::Search { query, limit } => {
             let needle = query.to_lowercase();
             let matches: Vec<_> = steps
                 .iter()
@@ -308,7 +377,7 @@ fn run_tool(name: &str, args: &Value, session: &std::path::Path) -> Result<Strin
                     s.label.to_lowercase().contains(&needle)
                         || s.detail.to_lowercase().contains(&needle)
                 })
-                .take(limit)
+                .take(*limit)
                 .map(|(i, s)| {
                     json!({
                         "step_index": i,
@@ -319,7 +388,7 @@ fn run_tool(name: &str, args: &Value, session: &std::path::Path) -> Result<Strin
                 .collect();
             Ok(serde_json::to_string(&matches)?)
         }
-        "agx_list_annotations" => {
+        Tool::ListAnnotations => {
             // Load notes via the same sidecar the TUI uses. Fault-
             // tolerant: a missing file returns an empty set
             // (Annotations::load_for handles the missing case by
@@ -338,7 +407,6 @@ fn run_tool(name: &str, args: &Value, session: &std::path::Path) -> Result<Strin
                 .collect();
             Ok(serde_json::to_string(&notes)?)
         }
-        other => anyhow::bail!("unknown tool `{other}`"),
     }
 }
 
@@ -502,6 +570,81 @@ mod tests {
         let r = reply(r#"{"jsonrpc":"2.0","id":3,"method":"ping"}"#).expect("reply");
         assert_eq!(r["result"], json!({}));
         assert!(r.get("error").is_none());
+    }
+
+    fn call(params: Value, session: &std::path::Path) -> Value {
+        serde_json::to_value(handle_tools_call(json!(1), params, session)).unwrap()
+    }
+
+    fn missing_session() -> PathBuf {
+        PathBuf::from("/nonexistent/agx-mcp-test/session.jsonl")
+    }
+
+    #[test]
+    fn unknown_tool_is_invalid_params_without_loading_session() {
+        // The session path doesn't exist: if the server tried to load
+        // it first we'd see a tool execution error instead.
+        let r = call(json!({"name": "agx_nope"}), &missing_session());
+        assert_eq!(error_code(&r), -32602);
+    }
+
+    #[test]
+    fn missing_tool_name_is_invalid_params() {
+        let r = call(json!({"arguments": {}}), &fixture());
+        assert_eq!(error_code(&r), -32602);
+    }
+
+    #[test]
+    fn non_object_arguments_is_invalid_params() {
+        let r = call(
+            json!({"name": "agx_session_summary", "arguments": [1]}),
+            &fixture(),
+        );
+        assert_eq!(error_code(&r), -32602);
+    }
+
+    #[test]
+    fn search_without_query_is_invalid_params() {
+        let r = call(json!({"name": "agx_search", "arguments": {}}), &fixture());
+        assert_eq!(error_code(&r), -32602);
+    }
+
+    #[test]
+    fn non_integer_limit_is_invalid_params() {
+        let r = call(
+            json!({"name": "agx_recent_errors", "arguments": {"limit": "five"}}),
+            &fixture(),
+        );
+        assert_eq!(error_code(&r), -32602);
+    }
+
+    #[test]
+    fn session_load_failure_is_tool_error_result() {
+        let r = call(json!({"name": "agx_session_summary"}), &missing_session());
+        assert!(
+            r.get("error").is_none(),
+            "execution failure is not an RPC error"
+        );
+        assert_eq!(r["result"]["isError"], json!(true));
+        assert_eq!(r["result"]["content"][0]["type"], json!("text"));
+        assert!(
+            r["result"]["content"][0]["text"]
+                .as_str()
+                .is_some_and(|t| !t.is_empty())
+        );
+    }
+
+    #[test]
+    fn successful_tool_call_is_not_flagged_as_error() {
+        let r = call(
+            json!({"name": "agx_search", "arguments": {"query": "a", "limit": 2}}),
+            &fixture(),
+        );
+        assert!(r.get("error").is_none());
+        assert_ne!(r["result"]["isError"], json!(true));
+        let text = r["result"]["content"][0]["text"].as_str().expect("text");
+        let matches: Value = serde_json::from_str(text).expect("json payload");
+        assert!(matches.as_array().is_some_and(|m| m.len() <= 2));
     }
 
     #[test]

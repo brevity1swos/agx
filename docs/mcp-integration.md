@@ -48,6 +48,13 @@ Every tool returns JSON strings the agent can parse. Schemas match
 `docs/eval-integration.md` field names (Step, PII Match, etc.)
 where applicable.
 
+Errors follow the MCP spec. An unknown tool name or bad arguments
+(e.g. `agx_search` without `query`, a non-integer `limit`) returns a
+JSON-RPC `-32602` error, and the session file is not read. A valid
+call that fails while running (e.g. the session file can't be read
+or parsed) returns a normal result with `isError: true` and the
+failure message as text content, so the model can see it and react.
+
 ## Wiring into Claude Code
 
 `.mcp.json` at the project root (or `~/.claude.json` for global):
