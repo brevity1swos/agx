@@ -212,7 +212,12 @@ fn load_cached(session: &std::path::Path) -> Result<Vec<Step>> {
         .modified()
         .unwrap_or(SystemTime::UNIX_EPOCH);
     {
-        let guard = CACHE.lock().expect("cache mutex poisoned");
+        // A poisoned lock only means a previous holder panicked; the
+        // cached value is still a complete `Option<StepCache>`, so
+        // recover it instead of crashing the long-lived server.
+        let guard = CACHE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(cache) = guard.as_ref()
             && cache.mtime == current_mtime
         {
@@ -224,12 +229,12 @@ fn load_cached(session: &std::path::Path) -> Result<Vec<Step>> {
     // slow parse doesn't stall a concurrent reader.
     let steps = agx_core::loader::load_session(session)
         .with_context(|| format!("loading session {}", session.display()))?;
-    if let Ok(mut guard) = CACHE.lock() {
-        *guard = Some(StepCache {
-            mtime: current_mtime,
-            steps: steps.clone(),
-        });
-    }
+    *CACHE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(StepCache {
+        mtime: current_mtime,
+        steps: steps.clone(),
+    });
     Ok(steps)
 }
 
@@ -390,4 +395,31 @@ fn main() -> Result<()> {
         out.flush()?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/sample_session.jsonl")
+    }
+
+    #[test]
+    fn load_cached_survives_poisoned_mutex() {
+        // A panic while holding the lock poisons it; the server must
+        // keep serving rather than crash on every later tool call.
+        let _ = std::thread::spawn(|| {
+            let _guard = CACHE
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            panic!("poison the cache");
+        })
+        .join();
+        assert!(CACHE.is_poisoned());
+        let first = load_cached(&fixture()).expect("first load");
+        let second = load_cached(&fixture()).expect("cached load");
+        assert_eq!(first.len(), second.len());
+        assert!(!first.is_empty());
+    }
 }
