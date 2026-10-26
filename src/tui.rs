@@ -179,10 +179,14 @@ impl App {
         self.search_matches.clear();
         self.bookmarks.clear();
         self.filtered_view = (0..self.steps.len()).collect();
-        if let Some(sel) = old_sel {
-            let clamped = sel.min(self.steps.len().saturating_sub(1));
-            self.list_state.select(Some(clamped));
-        }
+        // Clamp into the new list; an empty list selects nothing and a
+        // first growth from empty lands on step 0.
+        let new_sel = if self.steps.is_empty() {
+            None
+        } else {
+            Some(old_sel.map_or(0, |sel| sel.min(self.steps.len() - 1)))
+        };
+        self.list_state.select(new_sel);
         self.sync_conversation_cursor();
     }
 
@@ -2614,6 +2618,27 @@ mod tests {
         app.list_state.select(Some(5));
         app.sync_conversation_cursor();
         assert_eq!(app.conversation_list_state.selected(), Some(1));
+    }
+
+    #[test]
+    fn reload_steps_selects_first_when_previously_empty() {
+        // Live mode can start on an empty file; the first growth must
+        // land a cursor on step 0 rather than leaving nothing selected.
+        let mut app = App::new(Vec::new(), false);
+        assert_eq!(app.list_state.selected(), None);
+        app.reload_steps(sample_steps());
+        assert_eq!(app.list_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn reload_steps_clears_selection_when_new_list_is_empty() {
+        // Truncation to zero steps must not leave a dangling `Some(0)`
+        // pointing past the end of an empty list.
+        let mut app = App::new(sample_steps(), false);
+        app.list_state.select(Some(3));
+        app.reload_steps(Vec::new());
+        assert_eq!(app.list_state.selected(), None);
+        assert_eq!(app.conversation_list_state.selected(), None);
     }
 
     #[test]
