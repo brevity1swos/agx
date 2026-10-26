@@ -371,6 +371,7 @@ pub fn build(entries: &[Entry]) -> Vec<Step> {
     // file contains multiple independent conversation threads, each
     // root is a fork root. Built in one pass so `build()` stays O(N).
     let fork_uuids = collect_fork_root_uuids(entries);
+    let mut seen_message_ids: std::collections::HashSet<&str> = std::collections::HashSet::new();
     let mut steps = Vec::new();
     for entry in entries {
         match entry {
@@ -445,8 +446,18 @@ pub fn build(entries: &[Entry]) -> Vec<Step> {
                 // If this assistant message produced at least one step, attach
                 // model + usage to the first of them. Format parsers across
                 // agx follow this same convention to avoid double-counting
-                // when summing a corpus.
-                if steps.len() > first_idx {
+                // when summing a corpus. Claude Code splits one API response
+                // into one entry per content block, each repeating the same
+                // `message.id` + full usage — so only the first entry per id
+                // carries it. Entries without an id attach per entry. The id
+                // is only claimed once an entry actually emitted a step, so a
+                // thinking-only block doesn't swallow the response's usage.
+                if steps.len() > first_idx
+                    && a.message
+                        .id
+                        .as_deref()
+                        .is_none_or(|id| seen_message_ids.insert(id))
+                {
                     let usage = a
                         .message
                         .usage
@@ -686,6 +697,7 @@ mod tests {
                 parent_uuid: Some("u1".into()),
                 timestamp: None,
                 message: AssistantMessage {
+                    id: None,
                     role: "assistant".into(),
                     model: None,
                     usage: None,
@@ -722,6 +734,7 @@ mod tests {
             parent_uuid: None,
             timestamp: None,
             message: AssistantMessage {
+                id: None,
                 role: "assistant".into(),
                 model: Some("claude-opus-4-6".into()),
                 usage: Some(ClaudeUsage {
@@ -757,6 +770,37 @@ mod tests {
     }
 
     #[test]
+    fn usage_deduped_across_entries_sharing_message_id() {
+        // Claude Code writes one JSONL line per content block; every line
+        // from the same API response repeats `message.id` + the full
+        // `message.usage`. Only the first entry per id may carry usage.
+        let lines = [
+            r#"{"type":"assistant","uuid":"a1","parentUuid":null,"timestamp":null,"message":{"id":"msg_1","role":"assistant","model":"claude-opus-4-6","usage":{"input_tokens":100,"output_tokens":50},"content":[{"type":"text","text":"thinking"}]}}"#,
+            r#"{"type":"assistant","uuid":"a2","parentUuid":"a1","timestamp":null,"message":{"id":"msg_1","role":"assistant","model":"claude-opus-4-6","usage":{"input_tokens":100,"output_tokens":50},"content":[{"type":"tool_use","id":"t1","name":"Read","input":{}}]}}"#,
+            r#"{"type":"assistant","uuid":"a3","parentUuid":"a2","timestamp":null,"message":{"id":"msg_2","role":"assistant","model":"claude-opus-4-6","usage":{"input_tokens":7,"output_tokens":3},"content":[{"type":"text","text":"done"}]}}"#,
+            // No id: legacy behavior — attaches per entry.
+            r#"{"type":"assistant","uuid":"a4","parentUuid":"a3","timestamp":null,"message":{"role":"assistant","model":"claude-opus-4-6","usage":{"input_tokens":1,"output_tokens":1},"content":[{"type":"text","text":"x"}]}}"#,
+            r#"{"type":"assistant","uuid":"a5","parentUuid":"a4","timestamp":null,"message":{"role":"assistant","model":"claude-opus-4-6","usage":{"input_tokens":1,"output_tokens":1},"content":[{"type":"text","text":"y"}]}}"#,
+        ];
+        let entries: Vec<Entry> = lines
+            .iter()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        let steps = build(&entries);
+        assert_eq!(steps.len(), 5);
+        assert_eq!(steps[0].tokens_in, Some(100));
+        assert_eq!(steps[0].model.as_deref(), Some("claude-opus-4-6"));
+        assert_eq!(steps[1].tokens_in, None);
+        assert_eq!(steps[1].model, None);
+        assert_eq!(steps[2].tokens_in, Some(7));
+        assert_eq!(steps[3].tokens_in, Some(1));
+        assert_eq!(steps[4].tokens_in, Some(1));
+        let t = compute_session_totals(&steps);
+        assert_eq!(t.tokens_in, 109);
+        assert_eq!(t.tokens_out, 55);
+    }
+
+    #[test]
     fn missing_usage_leaves_all_steps_clean() {
         use crate::session::{AssistantEntry, AssistantMessage};
         let entries = vec![Entry::Assistant(AssistantEntry {
@@ -764,6 +808,7 @@ mod tests {
             parent_uuid: None,
             timestamp: None,
             message: AssistantMessage {
+                id: None,
                 role: "assistant".into(),
                 model: None,
                 usage: None,
@@ -802,6 +847,7 @@ mod tests {
             parent_uuid: parent.map(str::to_string),
             timestamp: None,
             message: AssistantMessage {
+                id: None,
                 role: "assistant".into(),
                 model: None,
                 usage: None,
@@ -871,6 +917,7 @@ mod tests {
                 parent_uuid: Some("u1".into()),
                 timestamp: None,
                 message: AssistantMessage {
+                    id: None,
                     role: "assistant".into(),
                     model: None,
                     usage: None,
@@ -997,6 +1044,7 @@ mod tests {
                 parent_uuid: None,
                 timestamp: None,
                 message: AssistantMessage {
+                    id: None,
                     role: "assistant".into(),
                     model: None,
                     usage: None,
