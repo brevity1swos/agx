@@ -16,10 +16,12 @@
 //!   `outputs.generations[0][0].message.data.tool_calls`; usage + model
 //!   from `outputs.llm_output.token_usage` + `.model_name`, with a fallback
 //!   to `extra.invocation_params.model`
-//! - `tool` run → paired tool_use + tool_result using the run's `name`,
-//!   `inputs` as the call arguments, `outputs.output` (or the raw
-//!   `outputs`) as the result. `id` is used as the call identifier so the
-//!   label is stable across reruns.
+//! - `tool` run → tool_result closing the matching pending chat_model
+//!   tool_use (by `tool_call_id` when recorded, else FIFO by name), reusing
+//!   that use's id. Unmatched runs emit a paired tool_use + tool_result
+//!   using the run's `name`, `inputs` as the call arguments,
+//!   `outputs.output` (or the raw `outputs`) as the result, and the run
+//!   `id` as the call identifier so the label is stable across reruns.
 //! - `chain` / `retriever` / `parser` inner runs → skipped; agx walks
 //!   into their children without emitting a step for the wrapper itself.
 //!
@@ -34,8 +36,8 @@
 //!   test shows duplicates, add a seen-content set.
 
 use crate::timeline::{
-    Step, StepKind, Usage, assistant_text_step, attach_usage_to_first, compute_durations,
-    parse_iso_ms, pretty_json, tool_result_step, tool_use_step, user_text_step,
+    Step, Usage, assistant_text_step, attach_usage_to_first, compute_durations, parse_iso_ms,
+    pretty_json, tool_result_step, tool_use_step, user_text_step,
 };
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -87,11 +89,12 @@ pub fn load(path: &Path) -> Result<Vec<Step>> {
     let mut flat: Vec<&Run> = Vec::new();
     collect_runs(&root, &mut flat);
     flat.sort_by_key(|r| r.start_time.as_deref().and_then(parse_iso_ms).unwrap_or(0));
+    let mut pending: Vec<PendingUse> = Vec::new();
     for run in flat {
         let ts = run.start_time.as_deref().and_then(parse_iso_ms);
         match run.run_type.as_str() {
-            "chat_model" | "llm" => append_chat_model_steps(run, ts, &mut steps),
-            "tool" => append_tool_steps(run, ts, &mut steps),
+            "chat_model" | "llm" => append_chat_model_steps(run, ts, &mut steps, &mut pending),
+            "tool" => append_tool_steps(run, ts, &mut steps, &mut pending),
             _ => {} // chain / retriever / parser / other — skip
         }
     }
@@ -135,7 +138,20 @@ fn extract_user_input(run: &Run) -> Option<String> {
     None
 }
 
-fn append_chat_model_steps(run: &Run, ts: Option<u64>, steps: &mut Vec<Step>) {
+/// A `tool_use` emitted from a chat_model's `tool_calls[]` that no `tool`
+/// run has closed yet. Kept in emission order so name-only matching is
+/// FIFO across parallel calls.
+struct PendingUse {
+    name: String,
+    tool_call_id: String,
+}
+
+fn append_chat_model_steps(
+    run: &Run,
+    ts: Option<u64>,
+    steps: &mut Vec<Step>,
+    pending: &mut Vec<PendingUse>,
+) {
     let first_idx = steps.len();
     // `generation` rather than `gen` — `gen` is a reserved keyword in
     // Rust 2024.
@@ -177,6 +193,10 @@ fn append_chat_model_steps(run: &Run, ts: Option<u64>, steps: &mut Vec<Step>) {
             let mut s = tool_use_step(id, name, &pretty_json(&args));
             s.timestamp_ms = ts;
             steps.push(s);
+            pending.push(PendingUse {
+                name: name.to_string(),
+                tool_call_id: id.to_string(),
+            });
         }
     }
 
@@ -189,7 +209,12 @@ fn append_chat_model_steps(run: &Run, ts: Option<u64>, steps: &mut Vec<Step>) {
     }
 }
 
-fn append_tool_steps(run: &Run, ts: Option<u64>, steps: &mut Vec<Step>) {
+fn append_tool_steps(
+    run: &Run,
+    ts: Option<u64>,
+    steps: &mut Vec<Step>,
+    pending: &mut Vec<PendingUse>,
+) {
     // Name comes from the run itself, not `inputs` (LangChain convention).
     let name = if run.name.is_empty() {
         "(unknown)"
@@ -200,24 +225,46 @@ fn append_tool_steps(run: &Run, ts: Option<u64>, steps: &mut Vec<Step>) {
     let result = extract_tool_output(&run.outputs);
 
     // LangChain convention: a `tool` run is the *execution* of a tool_call
-    // the prior chat_model already emitted as a `tool_use` (from its
-    // `outputs.generations[0][0].message.data.tool_calls`). If we just
-    // pushed a matching tool_use, don't duplicate it — emit only the
-    // tool_result and let the pair close. If the tool_use is missing
-    // (some agent architectures skip it), emit both so the call is still
-    // visible in the timeline.
-    let prev_is_matching_use = steps
-        .last()
-        .is_some_and(|s| s.kind == StepKind::ToolUse && s.tool_name.as_deref() == Some(name));
-    if !prev_is_matching_use {
-        let mut use_step = tool_use_step(&run.id, name, &input_pretty);
+    // a prior chat_model already emitted as a `tool_use` (from its
+    // `outputs.generations[0][0].message.data.tool_calls`). If an unclosed
+    // tool_use matches — by explicit tool_call_id when the run carries one,
+    // else the oldest pending use with the same name — emit only the
+    // tool_result under that use's id so the pair closes. If nothing
+    // matches (some agent architectures skip the tool_use), emit both so
+    // the call is still visible in the timeline.
+    let explicit_id = extract_tool_call_id(run);
+    let matched = explicit_id
+        .and_then(|id| pending.iter().position(|p| p.tool_call_id == id))
+        .or_else(|| pending.iter().position(|p| p.name == name))
+        .map(|i| pending.remove(i));
+    let call_id = match &matched {
+        Some(p) if !p.tool_call_id.is_empty() => p.tool_call_id.as_str(),
+        _ => run.id.as_str(),
+    };
+    if matched.is_none() {
+        let mut use_step = tool_use_step(call_id, name, &input_pretty);
         use_step.timestamp_ms = ts;
         steps.push(use_step);
     }
 
-    let mut res_step = tool_result_step(&run.id, &result, Some(name), Some(&input_pretty));
+    let mut res_step = tool_result_step(call_id, &result, Some(name), Some(&input_pretty));
     res_step.timestamp_ms = ts;
     steps.push(res_step);
+}
+
+/// The LLM-assigned tool_call id a `tool` run executes, when the tracer
+/// recorded it. LangChain versions disagree on where it lives.
+fn extract_tool_call_id(run: &Run) -> Option<&str> {
+    [
+        run.inputs.get("tool_call_id"),
+        run.extra.get("tool_call_id"),
+        run.extra
+            .get("metadata")
+            .and_then(|m| m.get("tool_call_id")),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(|v| v.as_str().filter(|s| !s.is_empty()))
 }
 
 fn extract_tool_input(inputs: &serde_json::Value) -> String {
@@ -422,6 +469,115 @@ mod tests {
         assert!(steps[1].detail.contains("test"));
         assert_eq!(steps[2].kind, StepKind::ToolResult);
         assert!(steps[2].detail.contains("found 3 results"));
+    }
+
+    fn parallel_calls_json(tool_runs: &str) -> String {
+        format!(
+            r#"{{
+            "id": "r1",
+            "run_type": "chain",
+            "inputs": {{"input": "do two things"}},
+            "child_runs": [{{
+                "id": "llm1",
+                "run_type": "chat_model",
+                "start_time": "2024-01-01T00:00:01Z",
+                "outputs": {{"generations": [[{{"message": {{"data": {{
+                    "content": "",
+                    "tool_calls": [
+                        {{"id": "call_A", "name": "search", "args": {{"q": "a"}}}},
+                        {{"id": "call_B", "name": "fetch", "args": {{"u": "b"}}}}
+                    ]
+                }}}}}}]]}}
+            }}, {tool_runs}]
+        }}"#
+        )
+    }
+
+    #[test]
+    fn parallel_tool_calls_pair_with_pending_uses_by_name() {
+        let json = parallel_calls_json(
+            r#"{"id": "run_A", "name": "search", "run_type": "tool",
+                "start_time": "2024-01-01T00:00:02Z",
+                "inputs": {"input": {"q": "a"}}, "outputs": {"output": "ra"}},
+               {"id": "run_B", "name": "fetch", "run_type": "tool",
+                "start_time": "2024-01-01T00:00:03Z",
+                "inputs": {"input": {"u": "b"}}, "outputs": {"output": "rb"}}"#,
+        );
+        let f = write_file(&json);
+        let steps = load(f.path()).unwrap();
+        let kinds: Vec<_> = steps.iter().map(|s| s.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                StepKind::UserText,
+                StepKind::ToolUse,
+                StepKind::ToolUse,
+                StepKind::ToolResult,
+                StepKind::ToolResult,
+            ]
+        );
+        assert_eq!(steps[3].tool_name.as_deref(), Some("search"));
+        assert_eq!(steps[3].tool_call_id.as_deref(), Some("call_A"));
+        assert_eq!(steps[4].tool_name.as_deref(), Some("fetch"));
+        assert_eq!(steps[4].tool_call_id.as_deref(), Some("call_B"));
+    }
+
+    #[test]
+    fn tool_run_prefers_tool_call_id_over_name_when_present() {
+        // Two pending uses with the same name; the tool runs arrive in
+        // reverse order but carry explicit tool_call_ids.
+        let json = r#"{
+            "id": "r1",
+            "run_type": "chain",
+            "inputs": {"input": "q"},
+            "child_runs": [{
+                "id": "llm1",
+                "run_type": "chat_model",
+                "start_time": "2024-01-01T00:00:01Z",
+                "outputs": {"generations": [[{"message": {"data": {
+                    "content": "",
+                    "tool_calls": [
+                        {"id": "call_1", "name": "search", "args": {}},
+                        {"id": "call_2", "name": "search", "args": {}}
+                    ]
+                }}}]]}
+            }, {
+                "id": "run_2", "name": "search", "run_type": "tool",
+                "start_time": "2024-01-01T00:00:02Z",
+                "inputs": {"input": "x", "tool_call_id": "call_2"},
+                "outputs": {"output": "second"}
+            }, {
+                "id": "run_1", "name": "search", "run_type": "tool",
+                "start_time": "2024-01-01T00:00:03Z",
+                "inputs": {"input": "y"},
+                "extra": {"metadata": {"tool_call_id": "call_1"}},
+                "outputs": {"output": "first"}
+            }]
+        }"#;
+        let f = write_file(json);
+        let steps = load(f.path()).unwrap();
+        assert_eq!(steps.len(), 5);
+        assert_eq!(steps[3].tool_call_id.as_deref(), Some("call_2"));
+        assert!(steps[3].detail.contains("second"));
+        assert_eq!(steps[4].tool_call_id.as_deref(), Some("call_1"));
+        assert!(steps[4].detail.contains("first"));
+    }
+
+    #[test]
+    fn tool_run_without_pending_use_still_emits_both() {
+        // A pending use for `search` must not absorb an unrelated tool run.
+        let json = parallel_calls_json(
+            r#"{"id": "run_X", "name": "other", "run_type": "tool",
+                "start_time": "2024-01-01T00:00:02Z",
+                "inputs": {"input": {}}, "outputs": {"output": "rx"}}"#,
+        );
+        let f = write_file(&json);
+        let steps = load(f.path()).unwrap();
+        assert_eq!(steps.len(), 5);
+        assert_eq!(steps[3].kind, StepKind::ToolUse);
+        assert_eq!(steps[3].tool_call_id.as_deref(), Some("run_X"));
+        assert_eq!(steps[4].kind, StepKind::ToolResult);
+        assert_eq!(steps[4].tool_call_id.as_deref(), Some("run_X"));
     }
 
     #[test]
