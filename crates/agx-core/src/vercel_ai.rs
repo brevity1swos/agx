@@ -144,7 +144,7 @@ fn append_step(step: &serde_json::Value, root: &serde_json::Value, steps: &mut V
                 .and_then(|v| v.as_str())
                 .unwrap_or("(unknown)");
             let id = tc.get("toolCallId").and_then(|v| v.as_str()).unwrap_or("");
-            let args = tc.get("args").cloned().unwrap_or(serde_json::Value::Null);
+            let args = tool_args(tc);
             let mut s = tool_use_step(id, name, &pretty_json(&args));
             s.timestamp_ms = ts;
             steps.push(s);
@@ -158,8 +158,9 @@ fn append_step(step: &serde_json::Value, root: &serde_json::Value, steps: &mut V
                 .and_then(|v| v.as_str())
                 .unwrap_or("(unknown)");
             let id = tr.get("toolCallId").and_then(|v| v.as_str()).unwrap_or("");
-            let args = tr.get("args").cloned().unwrap_or(serde_json::Value::Null);
-            let result_val = tr.get("result");
+            let args = tool_args(tr);
+            // v4 `result`, v5 `output`.
+            let result_val = tr.get("result").or_else(|| tr.get("output"));
             let result_text = match result_val {
                 Some(serde_json::Value::String(s)) => s.clone(),
                 Some(v) => pretty_json(v),
@@ -187,6 +188,16 @@ fn append_step(step: &serde_json::Value, root: &serde_json::Value, steps: &mut V
         let model = extract_model(step).or_else(|| extract_model(root));
         attach_usage_to_first(steps, first_idx, model.as_deref(), &usage);
     }
+}
+
+/// Tool-call arguments from a `toolCalls[]` / `toolResults[]` entry. AI SDK
+/// v4 names the field `args`; v5 renamed it to `input`.
+fn tool_args(entry: &serde_json::Value) -> serde_json::Value {
+    entry
+        .get("args")
+        .or_else(|| entry.get("input"))
+        .cloned()
+        .unwrap_or(serde_json::Value::Null)
 }
 
 /// Extract usage from a step-or-root object. Returns `None` when the
@@ -430,5 +441,37 @@ mod tests {
         // Model still set via fallback — that's fine, zero-usage doesn't
         // delete model information.
         assert_eq!(steps[1].model.as_deref(), Some("gpt-5"));
+    }
+
+    #[test]
+    fn v5_input_and_output_fields_are_read() {
+        // AI SDK v5 renamed toolCalls[].args → input and
+        // toolResults[].result → output.
+        let json = r#"{
+            "finishReason": "stop",
+            "steps": [{
+                "text": "",
+                "toolCalls": [{
+                    "toolCallId": "call_1",
+                    "toolName": "search",
+                    "input": {"query": "rust"}
+                }],
+                "toolResults": [{
+                    "toolCallId": "call_1",
+                    "toolName": "search",
+                    "input": {"query": "rust"},
+                    "output": {"hits": 42}
+                }]
+            }],
+            "messages": [{"role": "user", "content": "q"}]
+        }"#;
+        let f = write_file(json);
+        let steps = load(f.path()).unwrap();
+        assert_eq!(steps.len(), 3);
+        assert_eq!(steps[1].kind, StepKind::ToolUse);
+        assert!(steps[1].detail.contains("\"query\": \"rust\""));
+        assert_eq!(steps[2].kind, StepKind::ToolResult);
+        assert!(steps[2].detail.contains("\"query\": \"rust\""));
+        assert!(steps[2].detail.contains("\"hits\": 42"));
     }
 }
