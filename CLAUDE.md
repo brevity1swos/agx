@@ -38,41 +38,45 @@ cargo audit                                          # Supply chain audit
 
 ```
 crates/
-└── agx-core/           # Pure parsers / timeline / corpus / pricing / annotations / pii / semantic / notify / export.
-                        # Zero TUI deps. Publishable standalone to crates.io for Python / WASM / eval-harness consumers.
-src/
+├── agx-core/src/      # Pure parsers / timeline / corpus / pricing / annotations / pii / semantic / notify / export.
+│                      # Zero TUI deps. Publishable standalone to crates.io for Python / WASM / eval-harness consumers.
+│   ├── format.rs           # Format detection — returns one variant per supported format (incl. OtelProto)
+│   ├── browser.rs          # Multi-session discovery + picker (scans ~/.claude, ~/.codex, ~/.gemini)
+│   ├── session.rs          # Claude Code JSONL parser (Entry enum + serde Deserialize + ClaudeUsage)
+│   ├── codex.rs            # Codex CLI JSONL parser (response_item + function_call pairing)
+│   ├── gemini.rs           # Gemini CLI single-JSON parser (toolCall splitting + usageMetadata)
+│   ├── generic.rs          # OpenAI-compatible conversation parser ({messages: [{role, content, tool_calls}]})
+│   ├── langchain.rs        # LangChain / LangSmith run-tree export parser (chain/chat_model/tool)
+│   ├── otel_json.rs        # OpenTelemetry GenAI JSON parser (OTLP-JSON envelope + gen_ai.* semconv)
+│   ├── otel_proto.rs       # Binary OTLP parser (.pb/.otlp) — feature-gated behind `otel-proto`
+│   ├── vercel_ai.rs        # Vercel AI SDK `generateText` / `streamText` result parser (camelCase tool fields, steps[])
+│   ├── loader.rs           # `load_session(path)` — format dispatch front door shared by single-session and corpus flows
+│   ├── corpus.rs           # `agx corpus <dir>` subcommand: parallel rayon parse, aggregate, filter, text/json output
+│   ├── diff_align.rs       # Phase 4.1 pure alignment: LCS over (kind, tool_name) → Vec<AlignRow> for session-to-session diff
+│   ├── slice.rs            # Phase 4.2 pure slicing: duration / range parsers + slice_steps applied in main before dispatch
+│   ├── annotations.rs      # Phase 4.3 per-step annotations; sidecar JSON under ~/.agx/notes/, atomic rename, fault-tolerant load
+│   ├── semantic.rs         # Phase 4.4 semantic search (`//query`); feature-gated `embedding-search`, stub when off
+│   ├── notify.rs           # Phase 5.3 desktop notifications for `--live` mode; feature-gated `notifications`, no-op when off
+│   ├── pii.rs              # Phase 6.4 heuristic PII / credential scanner for --scan-pii; prefix-based, zero new deps
+│   ├── timeline.rs         # Shared Step / StepKind / Usage / SessionTotals + step helpers + compute_* functions
+│   ├── pricing.rs          # Per-model USD rate table + Step::cost_usd delegation target
+│   ├── export.rs           # Markdown / HTML / JSON transcript writers (String-returning, no I/O)
+│   └── debug_unknowns.rs   # Per-format drift scanners for --debug-unknowns
+├── agx-mcp/          # `agx-mcp` stdio MCP server exposing session introspection tools (see docs/mcp-integration.md)
+├── agx-py/           # pyo3 bindings (built via maturin; not in default-members)
+└── agx-wasm/         # wasm-bindgen bindings (built via wasm-pack; not in default-members)
+src/                    # agx-tui crate: the `agx` binary + TUI layer
 ├── lib.rs              # Thin library re-exporting everything from agx-core plus the local TUI modules
 ├── main.rs             # CLI entry point: clap + format dispatch + --summary / --export / --diff branches
-├── format.rs           # Format detection — returns ClaudeCode | Codex | Gemini | Generic | OtelJson
-├── browser.rs          # Multi-session discovery + picker (scans ~/.claude, ~/.codex, ~/.gemini)
-├── session.rs          # Claude Code JSONL parser (Entry enum + serde Deserialize + ClaudeUsage)
-├── codex.rs            # Codex CLI JSONL parser (response_item + function_call pairing)
-├── gemini.rs           # Gemini CLI single-JSON parser (toolCall splitting + usageMetadata)
-├── generic.rs          # OpenAI-compatible conversation parser ({messages: [{role, content, tool_calls}]})
-├── langchain.rs        # LangChain / LangSmith run-tree export parser (chain/chat_model/tool)
-├── otel_json.rs        # OpenTelemetry GenAI JSON parser (OTLP-JSON envelope + gen_ai.* semconv)
-├── otel_proto.rs       # Binary OTLP parser (.pb/.otlp) — feature-gated behind `otel-proto`
-├── vercel_ai.rs        # Vercel AI SDK `generateText` / `streamText` result parser (camelCase tool fields, steps[])
-├── loader.rs           # `load_session(path)` — format dispatch front door shared by single-session and corpus flows
-├── corpus.rs           # `agx corpus <dir>` subcommand: parallel rayon parse, aggregate, filter, text/json output
 ├── corpus_tui.rs       # `agx corpus --tui <dir>` interactive two-pane TUI (list + detail, drills into per-session tui.rs)
-├── diff_align.rs       # Phase 4.1 pure alignment: LCS over (kind, tool_name) → Vec<AlignRow> for session-to-session diff
 ├── diff_tui.rs         # `agx foo --diff bar --diff-tui` two-pane ratatui rendering of the alignment
-├── slice.rs            # Phase 4.2 pure slicing: duration / range parsers + slice_steps applied in main before dispatch
-├── annotations.rs      # Phase 4.3 per-step annotations; sidecar JSON under ~/.agx/notes/, atomic rename, fault-tolerant load
-├── semantic.rs         # Phase 4.4 semantic search (`//query`); feature-gated `embedding-search`, stub when off
-├── notify.rs           # Phase 5.3 desktop notifications for `--live` mode; feature-gated `notifications`, no-op when off
-├── pii.rs              # Phase 6.4 heuristic PII / credential scanner for --scan-pii; prefix-based, zero new deps
-├── timeline.rs         # Shared Step / StepKind / Usage / SessionTotals + step helpers + compute_* functions
-├── pricing.rs          # Per-model USD rate table + Step::cost_usd delegation target
-├── export.rs           # Markdown / HTML / JSON transcript writers (String-returning, no I/O)
-├── debug_unknowns.rs   # Per-format drift scanners for --debug-unknowns
+├── replay.rs           # Phase 5.4 experimental tool-call replay (`R` key): /bin/sh in its own process group, capped capture, deadline kill
 └── tui.rs              # ratatui TUI: three-pane layout, event loop, help / stats overlays, TerminalGuard
 ```
 
 ### Key patterns
 
-- **Format detection** (`src/format.rs`): reads the file as bytes, tries UTF-8 conversion. Non-UTF-8 content → `Format::OtelProto` (binary OTLP). If UTF-8 and a single JSON object: `resourceSpans` → OTel GenAI (JSON). `run_type` + `inputs`/`outputs` → LangChain / LangSmith. `finishReason` / `steps[].stepType` / camelCase `toolCallId` → Vercel AI SDK. `sessionId` + `messages` → Gemini. `messages` alone → Generic OpenAI-compatible. Otherwise JSONL; first non-empty line's `type` field is inspected. `session_meta`/`event_msg`/`response_item`/`turn_context` → Codex. Anything else → Claude Code. No file-extension sniffing — content decides.
+- **Format detection** (`crates/agx-core/src/format.rs`): reads the file as bytes and checks whether the first 8 KiB are valid UTF-8 (tolerating a multibyte char cut at the boundary). A non-UTF-8 prefix → `Format::OtelProto` (binary OTLP); otherwise detection continues on a lossy UTF-8 view, so a stray invalid byte later in a text session doesn't misroute it. If the text is a single JSON object: `resourceSpans` → OTel GenAI (JSON). `run_type` + `inputs`/`outputs` → LangChain / LangSmith. `finishReason` / `steps[].stepType` / camelCase `toolCallId` → Vercel AI SDK. `sessionId` + `messages` → Gemini. `messages` alone → Generic OpenAI-compatible. Otherwise JSONL; first non-empty line's `type` field is inspected. `session_meta`/`event_msg`/`response_item`/`turn_context` → Codex. Anything else → Claude Code. No file-extension sniffing — content decides.
 - **Per-format parser modules**: Each of `session.rs`, `codex.rs`, `gemini.rs`, `generic.rs`, `otel_json.rs` owns its format-specific deserialize types. `session.rs` exposes a Claude Code `Entry` enum that `timeline::build()` walks. The other four produce `Vec<Step>` directly with no shared intermediate enum. `main.rs` dispatches on the detected format.
 - **Shared step helpers** (`timeline.rs`): `user_text_step`, `assistant_text_step`, `tool_use_step`, `tool_result_step`, `truncate`, `short_id`, `pretty_json`, and `count_from_steps` are `pub(crate)` so every parser produces visually identical timeline items and summary counts. `tool_use_step` takes a pre-formatted input string. `tool_result_step` takes optional name/input args so orphan results degrade gracefully to `(unknown)`.
 - **Usage + model attach convention** (`timeline::attach_usage_to_first`): assistant messages in every format carry a single usage counter for the whole message even though agx may emit multiple steps (text + tool_uses). The shared `Usage` struct and `attach_usage_to_first(steps, start, model, &usage)` helper attach `model` + tokens to the **first** step emitted from each assistant message / span. All five parsers use this same anchor so corpus-level sums (`timeline::compute_session_totals`) never double-count. When adding a new format parser, mirror this pattern.
@@ -174,10 +178,10 @@ consumer of sift.
 ## Not to Do
 
 - Do not add hosted components (web UI, cloud sync, telemetry). agx is terminal-native.
-- Do not pull in heavy dependencies. Every new dep should justify its weight against the current ~6,500 LOC / 8-dep baseline. Heavy optional crates (e.g. `prost`, `opentelemetry-proto`, `fastembed-rs`, `pyo3`) must sit behind a Cargo feature flag that's off by default.
+- Do not pull in heavy dependencies. Every new dep should justify its weight against the current ~17,000 LOC (incl. tests) / lean-dep baseline. Heavy optional crates (e.g. `prost`, `opentelemetry-proto`, `fastembed-rs`, `pyo3`) must sit behind a Cargo feature flag that's off by default.
 - Do not suppress clippy warnings without a `#[allow]` + comment explaining why.
 - Do not commit real session JSONL/JSON files as fixtures. Use the synthetic fixtures in `assets/` or add new synthetic ones following the same pattern — obviously-fake UUIDs, generic content, zero personal data.
-- Do not unify the three parsers behind a shared `Entry` trait/enum "for cleanliness." Each format is different enough that unification would leak format-specific concerns into the shared type. Parsers produce `Vec<Step>` directly and the uniformity happens at the Step layer, not the Entry layer.
+- Do not unify the format parsers behind a shared `Entry` trait/enum "for cleanliness." Each format is different enough that unification would leak format-specific concerns into the shared type. Parsers produce `Vec<Step>` directly and the uniformity happens at the Step layer, not the Entry layer.
 - Do not let `docs/suite-conventions.md` drift from the copies in rgx and sift. The doc is load-bearing for cross-tool UX and is maintained by discipline, not CI. If you change something in agx that implies a conventions update, propagate the same change to the other two repos in the same release cycle — or revert the agx change and open a conventions-first discussion.
 - Do not reach into sift. agx is the producer side of the agx ↔ sift contract; sift consumes agx's `--export json` and (future) `--jump-to` CLI, but agx never spawns sift, never reads sift's `.sift/` directory, and never renders sift's ledger state in the timeline. One-way coupling per suite-conventions §6.5.
 - Do not add features that duplicate sift's review gate or rgx's regex authoring surface. The stepwise thesis (human oversight without efficiency cost) relies on each tool staying narrow. If agx starts showing writable-review UI or regex-authoring widgets, it's crept into the sibling's domain — defer instead.
