@@ -30,7 +30,7 @@
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{Value, json};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
@@ -50,18 +50,6 @@ struct Cli {
     /// Claude Code / Codex / Gemini session path here.
     #[arg(long, value_name = "PATH")]
     session: PathBuf,
-}
-
-/// Minimal JSON-RPC 2.0 request shape — we only need method + id + params.
-#[derive(Debug, Deserialize)]
-struct Request {
-    #[allow(dead_code)]
-    jsonrpc: String,
-    #[serde(default)]
-    id: Option<Value>,
-    method: String,
-    #[serde(default)]
-    params: Value,
 }
 
 /// JSON-RPC 2.0 response shape. Only `result` or `error` is set, never both.
@@ -362,39 +350,68 @@ fn main() -> Result<()> {
 
     for line in stdin.lock().lines() {
         let line = line?;
-        if line.trim().is_empty() {
-            continue;
+        if let Some(resp) = handle_line(&line, &cli.session) {
+            writeln!(out, "{}", serde_json::to_string(&resp)?)?;
+            out.flush()?;
         }
-        let req: Request = match serde_json::from_str(&line) {
-            Ok(r) => r,
-            Err(e) => {
-                // Protocol-level parse error. MCP says report as a
-                // JSON-RPC error with id=null when we can't read the id.
-                let resp = err(Value::Null, -32700, format!("parse error: {e}"));
-                writeln!(out, "{}", serde_json::to_string(&resp)?)?;
-                out.flush()?;
-                continue;
-            }
-        };
-
-        // Notifications (no id) are one-way; MCP's
-        // `notifications/initialized` is the common case. Don't reply.
-        let is_notification = req.id.is_none();
-        if is_notification {
-            continue;
-        }
-        let id = req.id.unwrap_or(Value::Null);
-
-        let resp = match req.method.as_str() {
-            "initialize" => handle_initialize(id),
-            "tools/list" => handle_tools_list(id),
-            "tools/call" => handle_tools_call(id, req.params, &cli.session),
-            other => err(id, -32601, format!("unknown method `{other}`")),
-        };
-        writeln!(out, "{}", serde_json::to_string(&resp)?)?;
-        out.flush()?;
     }
     Ok(())
+}
+
+/// Process one line of stdin. Returns `None` when no reply is due:
+/// blank lines and notifications.
+///
+/// The request is inspected as a raw `Value` rather than deserialized
+/// into a struct with `id: Option<Value>`, because serde collapses an
+/// explicit `"id": null` into `None` — and JSON-RPC treats an absent
+/// id (notification, no reply) differently from a present-null id
+/// (request, reply with id null).
+fn handle_line(line: &str, session: &std::path::Path) -> Option<Response> {
+    if line.trim().is_empty() {
+        return None;
+    }
+    let value: Value = match serde_json::from_str(line) {
+        Ok(v) => v,
+        // We can't read the id of unparseable input, so per JSON-RPC
+        // the error goes back with id=null.
+        Err(e) => return Some(err(Value::Null, -32700, format!("parse error: {e}"))),
+    };
+    let Some(obj) = value.as_object() else {
+        return Some(err(
+            Value::Null,
+            -32600,
+            "invalid request: expected a JSON object",
+        ));
+    };
+
+    let id = obj.get("id");
+    let id_ok = matches!(
+        id,
+        None | Some(Value::Null | Value::String(_) | Value::Number(_))
+    );
+    let method = obj.get("method").and_then(Value::as_str);
+    let version_ok = obj.get("jsonrpc").and_then(Value::as_str) == Some("2.0");
+    let (Some(method), true, true) = (method, id_ok, version_ok) else {
+        // Echo the id back only when it is itself well-formed.
+        let reply_id = id.filter(|_| id_ok).cloned().unwrap_or(Value::Null);
+        return Some(err(
+            reply_id,
+            -32600,
+            "invalid request: need jsonrpc \"2.0\", a string method, and a string/number/null id",
+        ));
+    };
+
+    // Notifications (no id key at all) are one-way; MCP's
+    // `notifications/initialized` is the common case. Don't reply.
+    let id = id?.clone();
+    let params = obj.get("params").cloned().unwrap_or(Value::Null);
+
+    Some(match method {
+        "initialize" => handle_initialize(id),
+        "tools/list" => handle_tools_list(id),
+        "tools/call" => handle_tools_call(id, params, session),
+        other => err(id, -32601, format!("unknown method `{other}`")),
+    })
 }
 
 #[cfg(test)]
@@ -421,5 +438,66 @@ mod tests {
         let second = load_cached(&fixture()).expect("cached load");
         assert_eq!(first.len(), second.len());
         assert!(!first.is_empty());
+    }
+
+    /// Run one line through the server and return the reply as JSON.
+    fn reply(line: &str) -> Option<Value> {
+        handle_line(line, &fixture()).map(|r| serde_json::to_value(r).unwrap())
+    }
+
+    fn error_code(v: &Value) -> i64 {
+        v["error"]["code"].as_i64().expect("error code")
+    }
+
+    #[test]
+    fn request_with_null_id_gets_a_reply() {
+        let r = reply(r#"{"jsonrpc":"2.0","id":null,"method":"tools/list"}"#)
+            .expect("explicit null id is a request, not a notification");
+        assert_eq!(r["id"], Value::Null);
+        assert!(r["result"]["tools"].is_array());
+    }
+
+    #[test]
+    fn notification_without_id_gets_no_reply() {
+        assert!(reply(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#).is_none());
+    }
+
+    #[test]
+    fn blank_line_gets_no_reply() {
+        assert!(reply("   ").is_none());
+    }
+
+    #[test]
+    fn invalid_json_is_parse_error_with_null_id() {
+        let r = reply("{not json").expect("reply");
+        assert_eq!(error_code(&r), -32700);
+        assert_eq!(r["id"], Value::Null);
+    }
+
+    #[test]
+    fn non_object_json_is_invalid_request() {
+        let r = reply("42").expect("reply");
+        assert_eq!(error_code(&r), -32600);
+        assert_eq!(r["id"], Value::Null);
+    }
+
+    #[test]
+    fn missing_method_is_invalid_request_echoing_id() {
+        let r = reply(r#"{"jsonrpc":"2.0","id":7}"#).expect("reply");
+        assert_eq!(error_code(&r), -32600);
+        assert_eq!(r["id"], json!(7));
+    }
+
+    #[test]
+    fn wrong_jsonrpc_version_is_invalid_request() {
+        let r = reply(r#"{"jsonrpc":"1.0","id":"a","method":"tools/list"}"#).expect("reply");
+        assert_eq!(error_code(&r), -32600);
+        assert_eq!(r["id"], json!("a"));
+    }
+
+    #[test]
+    fn unknown_method_is_method_not_found() {
+        let r = reply(r#"{"jsonrpc":"2.0","id":1,"method":"nope"}"#).expect("reply");
+        assert_eq!(error_code(&r), -32601);
     }
 }
