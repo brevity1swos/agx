@@ -142,13 +142,13 @@ removing or renaming is MAJOR.
 Pre-requisite for actual PyPI / npm publish: GitHub Actions matrix
 building wheels for Linux-x86_64, Linux-aarch64, macOS-arm64, and
 Windows-x86_64 (Python); and for web / nodejs / bundler (WASM). Lives
-in `.github/workflows/` and runs on every tag push.
+in `.github/workflows/python-wheels.yml` and `wasm-packages.yml`, and
+runs when release-plz pushes an `agx-core-v*` tag.
 
-That workflow is a **separate commit** from this doc — the shape of
-the matrix and the release-automation trigger (e.g. release-plz or
-manual tag) is its own design decision. Until it ships, `maturin
-build --release` + `wasm-pack build --release` locally are the
-supported paths.
+The bindings version in lockstep with agx-core: each build stamps the
+version from that tag, so `agx-py` on PyPI and `agx-wasm` on npm always
+carry the version of the core crate they wrap. A bindings-only change
+ships with the next agx-core release.
 
 ## Deprecation policy
 

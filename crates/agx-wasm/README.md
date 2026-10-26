@@ -55,9 +55,9 @@ raw bytes in. Format detection + parsing happen in the Rust wasm.
 
 ## Distribution
 
-npm publish is the eventual target (same as Python → PyPI). The
-Phase 7.4 CI matrix commit will wire `wasm-pack publish` into release
-automation.
+Published to npm as `agx-wasm` by `.github/workflows/wasm-packages.yml`
+when release-plz tags an agx-core release (`agx-core-v*`). The package
+version follows agx-core's.
 
 ## License
 

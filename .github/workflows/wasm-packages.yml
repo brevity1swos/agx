@@ -1,20 +1,26 @@
-# WASM packages for agx-wasm, published to npm on tag push.
+# WASM packages for agx-wasm, published to npm as `agx-wasm`.
 #
 # Three targets (web / nodejs / bundler) each produce a separate
 # `pkg/` directory. The `bundler` variant is published as the
 # canonical npm package; `web` and `nodejs` ship as artifacts.
 #
-# Security review: no untrusted `github.event.*` input is consumed
-# in `run:` commands. `matrix.target` is a static string from this
-# file. `secrets.NPM_TOKEN` threads through `env:` into npm, which
-# is the documented safe pattern.
+# Trigger: the `agx-core-v*` tag release-plz pushes when agx-core is
+# released. Like agx-py, the package versions in lockstep with
+# agx-core — stamped from the tag at build time.
+#
+# Secrets: `NPM_TOKEN` (an npm automation token) in the `npm`
+# environment. Publishes with provenance, which needs `id-token: write`.
+#
+# Security review: no untrusted `github.event.*` input is consumed in
+# `run:` commands. `matrix.target` is a static string from this file,
+# and the tag name reaches the shell only through `env:`.
 
 name: wasm-packages
 
 on:
   push:
     tags:
-      - 'v*'
+      - 'agx-core-v*'
   workflow_dispatch:
 
 permissions:
@@ -27,36 +33,48 @@ jobs:
       matrix:
         target: [web, nodejs, bundler]
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Stamp version from agx-core tag
+        if: startsWith(github.ref, 'refs/tags/agx-core-v')
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          export VERSION="${TAG#agx-core-v}"
+          perl -pi -e '$n += s/^version = "[^"]*"/version = "$ENV{VERSION}"/ unless $n' crates/agx-wasm/Cargo.toml
+          grep -m1 '^version' crates/agx-wasm/Cargo.toml
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           targets: wasm32-unknown-unknown
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2
+        with:
+          tool: wasm-pack
       - name: Build WASM package
         env:
           TARGET: ${{ matrix.target }}
         run: |
           cd crates/agx-wasm
           wasm-pack build --target "$TARGET" --release --out-dir "pkg-$TARGET"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: agx-wasm-${{ matrix.target }}
           path: crates/agx-wasm/pkg-${{ matrix.target }}
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/agx-core-v')
     runs-on: ubuntu-latest
     needs: [build]
     environment: npm
     permissions:
       contents: read
+      id-token: write # npm provenance
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: agx-wasm-bundler
           path: pkg
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
@@ -64,4 +82,4 @@ jobs:
         working-directory: pkg
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public
+        run: npm publish --access public --provenance

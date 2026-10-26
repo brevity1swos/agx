@@ -13,8 +13,10 @@ back the agx terminal debugger — no TUI deps compiled in.
 ## Install
 
 ```sh
-pip install agx
+pip install agx-py
 ```
+
+The distribution is `agx-py`; the import name is `agx`.
 
 Wheels are built with [maturin](https://github.com/PyO3/maturin); the
 abi3-py310 target means one wheel works on every Python ≥ 3.10.

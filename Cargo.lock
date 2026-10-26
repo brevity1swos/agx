@@ -35,7 +35,7 @@ dependencies = [
 
 [[package]]
 name = "agx-py"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "agx-core",
  "pyo3",
@@ -63,7 +63,7 @@ dependencies = [
 
 [[package]]
 name = "agx-wasm"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "agx-core",
  "anyhow",
