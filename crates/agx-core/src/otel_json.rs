@@ -8,7 +8,8 @@
 //!
 //! - `gen_ai.operation.name` drives span classification
 //!   (`chat` / `text_completion` / `execute_tool`)
-//! - `gen_ai.prompt.{N}.role` / `.content` produce user / system steps
+//! - `gen_ai.prompt.{N}.role` / `.content` produce user / system steps,
+//!   skipping any leading prompts that replay turns already on the timeline
 //! - `gen_ai.completion.{N}.role` / `.content` produce assistant steps
 //! - `gen_ai.tool.name` / `.call.id` / `.call.arguments` / `.call.result`
 //!   on an `execute_tool` span produce a paired tool_use + tool_result
@@ -22,8 +23,8 @@
 //! they'll be added in a follow-up if fixtures land in `tests/corpus/`.
 
 use crate::timeline::{
-    Step, Usage, assistant_text_step, attach_usage_to_first, compute_durations, null_as_default,
-    tool_result_step, tool_use_step, user_text_step,
+    Step, StepKind, Usage, assistant_text_step, attach_usage_to_first, compute_durations,
+    null_as_default, tool_result_step, tool_use_step, user_text_step,
 };
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -199,26 +200,44 @@ pub(crate) fn append_span(
 
 fn append_llm_span(attrs: &HashMap<&str, serde_json::Value>, ts_ms: u64, steps: &mut Vec<Step>) {
     // Walk gen_ai.prompt.{N}.* in numeric order, then completion.{N}.*
-    for (role, content) in indexed_messages(attrs, "gen_ai.prompt") {
-        let text = content.trim();
-        if text.is_empty() {
-            continue;
-        }
-        // Skip system prompts on the timeline — agx mirrors the other
-        // parsers' behavior (system messages are configuration, not turns).
-        match role.as_str() {
-            "user" => {
-                let mut s = user_text_step(text);
-                s.timestamp_ms = Some(ts_ms);
-                steps.push(s);
-            }
-            "assistant" => {
-                let mut s = assistant_text_step(text);
-                s.timestamp_ms = Some(ts_ms);
-                steps.push(s);
-            }
-            _ => {}
-        }
+    // Skip system prompts on the timeline — agx mirrors the other parsers'
+    // behavior (system messages are configuration, not turns).
+    let prompt_msgs = indexed_messages(attrs, "gen_ai.prompt");
+    let prompts: Vec<(StepKind, &str)> = prompt_msgs
+        .iter()
+        .filter_map(|(role, content)| {
+            let kind = match role.as_str() {
+                "user" => StepKind::UserText,
+                "assistant" => StepKind::AssistantText,
+                _ => return None,
+            };
+            let text = content.trim();
+            (!text.is_empty()).then_some((kind, text))
+        })
+        .collect();
+
+    // Most instrumentation replays the full conversation in every chat
+    // span's prompts. Skip the leading run of prompts that matches the
+    // text turns already on the timeline (in order) so earlier turns
+    // aren't re-emitted; a span whose prompts diverge from that history
+    // (e.g. a separate sub-agent conversation) emits everything after the
+    // divergence point. Derived from `steps` rather than parser state so
+    // the binary OTLP path, which shares this function, gets it too.
+    let already_emitted = steps
+        .iter()
+        .filter(|s| matches!(s.kind, StepKind::UserText | StepKind::AssistantText))
+        .zip(&prompts)
+        .take_while(|(s, (kind, text))| s.kind == *kind && s.detail == *text)
+        .count();
+
+    for &(kind, text) in &prompts[already_emitted..] {
+        let mut s = if kind == StepKind::UserText {
+            user_text_step(text)
+        } else {
+            assistant_text_step(text)
+        };
+        s.timestamp_ms = Some(ts_ms);
+        steps.push(s);
     }
     for (role, content) in indexed_messages(attrs, "gen_ai.completion") {
         let text = content.trim();
@@ -483,6 +502,84 @@ mod tests {
         assert_eq!(steps.len(), 2);
         assert!(steps[0].detail.contains("first"));
         assert!(steps[1].detail.contains("third"));
+    }
+
+    #[test]
+    fn full_history_prompts_are_not_re_emitted() {
+        // Second chat span replays the whole conversation in
+        // gen_ai.prompt.N (system + u1 + a1) before the new user turn.
+        // Only the new turn should land on the timeline.
+        let json = r#"{
+            "resourceSpans": [{"scopeSpans": [{"spans": [
+                {
+                    "startTimeUnixNano": "1000000000",
+                    "attributes": [
+                        {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+                        {"key": "gen_ai.prompt.0.role", "value": {"stringValue": "system"}},
+                        {"key": "gen_ai.prompt.0.content", "value": {"stringValue": "be brief"}},
+                        {"key": "gen_ai.prompt.1.role", "value": {"stringValue": "user"}},
+                        {"key": "gen_ai.prompt.1.content", "value": {"stringValue": "u1"}},
+                        {"key": "gen_ai.completion.0.role", "value": {"stringValue": "assistant"}},
+                        {"key": "gen_ai.completion.0.content", "value": {"stringValue": "a1"}}
+                    ]
+                },
+                {
+                    "startTimeUnixNano": "2000000000",
+                    "attributes": [
+                        {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+                        {"key": "gen_ai.usage.input_tokens", "value": {"intValue": "77"}},
+                        {"key": "gen_ai.prompt.0.role", "value": {"stringValue": "system"}},
+                        {"key": "gen_ai.prompt.0.content", "value": {"stringValue": "be brief"}},
+                        {"key": "gen_ai.prompt.1.role", "value": {"stringValue": "user"}},
+                        {"key": "gen_ai.prompt.1.content", "value": {"stringValue": "u1"}},
+                        {"key": "gen_ai.prompt.2.role", "value": {"stringValue": "assistant"}},
+                        {"key": "gen_ai.prompt.2.content", "value": {"stringValue": "a1"}},
+                        {"key": "gen_ai.prompt.3.role", "value": {"stringValue": "user"}},
+                        {"key": "gen_ai.prompt.3.content", "value": {"stringValue": "u2"}},
+                        {"key": "gen_ai.completion.0.role", "value": {"stringValue": "assistant"}},
+                        {"key": "gen_ai.completion.0.content", "value": {"stringValue": "a2"}}
+                    ]
+                }
+            ]}]}]
+        }"#;
+        let f = write_file(json);
+        let steps = load(f.path()).unwrap();
+        let details: Vec<&str> = steps.iter().map(|s| s.detail.as_str()).collect();
+        assert_eq!(details, vec!["u1", "a1", "u2", "a2"]);
+        // Usage of the second span anchors on its first *emitted* step.
+        assert_eq!(steps[2].tokens_in, Some(77));
+    }
+
+    #[test]
+    fn non_matching_prompt_history_is_still_emitted() {
+        // A span whose prompts don't start with the seen history (e.g. a
+        // separate sub-agent conversation) emits everything.
+        let json = r#"{
+            "resourceSpans": [{"scopeSpans": [{"spans": [
+                {
+                    "startTimeUnixNano": "1000000000",
+                    "attributes": [
+                        {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+                        {"key": "gen_ai.prompt.0.role", "value": {"stringValue": "user"}},
+                        {"key": "gen_ai.prompt.0.content", "value": {"stringValue": "u1"}}
+                    ]
+                },
+                {
+                    "startTimeUnixNano": "2000000000",
+                    "attributes": [
+                        {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+                        {"key": "gen_ai.prompt.0.role", "value": {"stringValue": "user"}},
+                        {"key": "gen_ai.prompt.0.content", "value": {"stringValue": "other"}},
+                        {"key": "gen_ai.prompt.1.role", "value": {"stringValue": "user"}},
+                        {"key": "gen_ai.prompt.1.content", "value": {"stringValue": "u1"}}
+                    ]
+                }
+            ]}]}]
+        }"#;
+        let f = write_file(json);
+        let steps = load(f.path()).unwrap();
+        let details: Vec<&str> = steps.iter().map(|s| s.detail.as_str()).collect();
+        assert_eq!(details, vec!["u1", "other", "u1"]);
     }
 
     #[test]
