@@ -1,25 +1,27 @@
 use crate::timeline::{
-    Step, Usage, assistant_text_step, attach_usage_to_first, compute_durations, pretty_json,
-    tool_result_step, tool_use_step, user_text_step,
+    Step, Usage, assistant_text_step, attach_usage_to_first, compute_durations, null_as_default,
+    pretty_json, tool_result_step, tool_use_step, user_text_step,
 };
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
 
+// String / Vec fields use `null_as_default` because SDK dumps (e.g.
+// OpenAI's `model_dump()`) write explicit `null` for absent values.
 #[derive(Debug, Deserialize)]
 struct Conversation {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     messages: Vec<Message>,
 }
 
 #[derive(Debug, Deserialize)]
 struct Message {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     role: String,
     #[serde(default)]
     content: serde_json::Value,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     tool_calls: Vec<ToolCall>,
     #[serde(default)]
     tool_call_id: Option<String>,
@@ -43,18 +45,33 @@ struct OpenAiUsage {
 
 #[derive(Debug, Deserialize)]
 struct ToolCall {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     id: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     function: ToolFunction,
 }
 
 #[derive(Debug, Default, Deserialize)]
 struct ToolFunction {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     name: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "arguments_as_string")]
     arguments: String,
+}
+
+/// OpenAI's wire format sends `arguments` as a JSON-encoded string, but
+/// several OpenAI-compatible SDKs / dumps store the already-parsed object.
+/// Normalize both (and `null`) to the string form `prettify_arguments`
+/// expects.
+fn arguments_as_string<'de, D>(d: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(match serde_json::Value::deserialize(d)? {
+        serde_json::Value::Null => String::new(),
+        serde_json::Value::String(s) => s,
+        other => other.to_string(),
+    })
 }
 
 pub fn load(path: &Path) -> Result<Vec<Step>> {
@@ -249,6 +266,34 @@ mod tests {
         let f = write_file(json);
         let steps = load(f.path()).unwrap();
         assert_eq!(steps[0].tokens_in, None);
+    }
+
+    #[test]
+    fn null_tool_calls_are_tolerated() {
+        // OpenAI SDK dumps write `"tool_calls": null` on plain replies.
+        let json = r#"{"messages":[
+            {"role":"user","content":"hi","tool_calls":null,"tool_call_id":null},
+            {"role":"assistant","content":"hello","tool_calls":null}
+        ]}"#;
+        let f = write_file(json);
+        let steps = load(f.path()).unwrap();
+        assert_eq!(steps.len(), 2);
+    }
+
+    #[test]
+    fn object_arguments_are_stringified() {
+        let json = r#"{"messages":[
+            {"role":"assistant","content":null,"tool_calls":[
+                {"id":"call_1","function":{"name":"search","arguments":{"q":"test"}}},
+                {"id":"call_2","function":{"name":"noop","arguments":null}}
+            ]},
+            {"role":"tool","tool_call_id":"call_1","content":"ok"}
+        ]}"#;
+        let f = write_file(json);
+        let steps = load(f.path()).unwrap();
+        assert_eq!(steps.len(), 3);
+        assert!(steps[0].detail.contains("\"q\": \"test\""));
+        assert!(steps[2].detail.contains("\"q\": \"test\""));
     }
 
     #[test]
