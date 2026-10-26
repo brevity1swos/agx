@@ -190,10 +190,11 @@ pub fn is_error_result(step: &Step) -> bool {
     // `haystack_has_nonzero_exit_code` because "exit code 1" as a
     // substring matches "exit code 127", "exit code 255", etc., and
     // "exit code 10" is a clean completion code in some tools.
+    // `"error"` and ` failed` are context-checked separately (see
+    // `haystack_has_error_key` / `haystack_has_nonzero_failed`) so that
+    // `{"error": null}` and `5 passed; 0 failed` don't trip the marker.
     const INDICATORS: &[&str] = &[
-        "\"error\"",
         "error:",
-        " failed",
         "\nfailed",
         "traceback",
         "panic!",
@@ -211,7 +212,54 @@ pub fn is_error_result(step: &Step) -> bool {
         .nth(1)
         .unwrap_or(&step.detail)
         .to_lowercase();
-    INDICATORS.iter().any(|kw| haystack.contains(kw)) || haystack_has_nonzero_exit_code(&haystack)
+    INDICATORS.iter().any(|kw| haystack.contains(kw))
+        || haystack_has_error_key(&haystack)
+        || haystack_has_nonzero_failed(&haystack)
+        || haystack_has_nonzero_exit_code(&haystack)
+}
+
+/// `"error"` anywhere in the haystack counts, except when it's a JSON key
+/// whose value is `null`, `false`, or `""` — the common "no error" shape
+/// in structured tool output.
+fn haystack_has_error_key(haystack: &str) -> bool {
+    const KEY: &str = "\"error\"";
+    let mut rest = haystack;
+    while let Some(idx) = rest.find(KEY) {
+        let after = &rest[idx + KEY.len()..];
+        let Some(value) = after.trim_start().strip_prefix(':') else {
+            // Not a key (e.g. `"status": "error"`) — keep flagging.
+            return true;
+        };
+        let value = value.trim_start();
+        if !["null", "false", "\"\""]
+            .iter()
+            .any(|benign| value.starts_with(benign))
+        {
+            return true;
+        }
+        rest = after;
+    }
+    false
+}
+
+/// ` failed` counts unless it's immediately preceded by a zero count, as in
+/// test-runner summaries (`5 passed; 0 failed`).
+fn haystack_has_nonzero_failed(haystack: &str) -> bool {
+    const MARKER: &str = " failed";
+    let mut rest = haystack;
+    while let Some(idx) = rest.find(MARKER) {
+        let before = &rest.as_bytes()[..idx];
+        let digit_start = before
+            .iter()
+            .rposition(|b| !b.is_ascii_digit())
+            .map_or(0, |p| p + 1);
+        let digits = &before[digit_start..];
+        if digits.is_empty() || digits.iter().any(|&b| b != b'0') {
+            return true;
+        }
+        rest = &rest[idx + MARKER.len()..];
+    }
+    false
 }
 
 /// Scan a lowercased haystack for `exit code <N>` / `process exited
@@ -1250,6 +1298,37 @@ mod tests {
     #[test]
     fn is_error_result_detects_json_error_field() {
         let step = result_step_with_body("{\"error\": \"bad request\"}");
+        assert!(is_error_result(&step));
+    }
+
+    #[test]
+    fn is_error_result_ignores_zero_failed_count() {
+        let step = result_step_with_body("test result: ok. 5 passed; 0 failed; 0 ignored");
+        assert!(!is_error_result(&step));
+        let step = result_step_with_body("summary:\n0 failed");
+        assert!(!is_error_result(&step));
+        // Non-zero counts still flag, including multi-digit ones ending in 0.
+        let step = result_step_with_body("test result: FAILED. 4 passed; 1 failed");
+        assert!(is_error_result(&step));
+        let step = result_step_with_body("3 passed; 10 failed");
+        assert!(is_error_result(&step));
+    }
+
+    #[test]
+    fn is_error_result_ignores_null_or_false_error_field() {
+        for body in [
+            "{\"error\": null, \"ok\": true}",
+            "{\"error\":false}",
+            "{\"error\": \"\"}",
+            "{\"result\": 1, \"error\" : null}",
+        ] {
+            let step = result_step_with_body(body);
+            assert!(!is_error_result(&step), "false positive on {body}");
+        }
+        // A real value after a null one still flags.
+        let step = result_step_with_body("[{\"error\": null}, {\"error\": \"boom\"}]");
+        assert!(is_error_result(&step));
+        let step = result_step_with_body("{\"error\": {\"code\": 400}}");
         assert!(is_error_result(&step));
     }
 
