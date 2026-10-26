@@ -113,6 +113,39 @@ pub struct ParsedSession {
     /// Feeds `--trajectory-stats` branch-rate and is surfaced in
     /// `--jsonl` output.
     pub fork_root_count: usize,
+    /// Tokens and cost attributed to each model, summed from the steps
+    /// that carry that model. `session_count` is 1 in every bucket.
+    /// Lets the corpus per-model breakdown split multi-model sessions
+    /// instead of crediting the whole session to every model.
+    pub model_usage: Vec<ModelBucket>,
+}
+
+/// Per-model usage for one session. Usage lives on the step that
+/// carries the model (`attach_usage_to_first`), so grouping by
+/// `step.model` attributes every token exactly once.
+pub fn model_usage(steps: &[Step]) -> Vec<ModelBucket> {
+    let mut buckets: Vec<ModelBucket> = Vec::new();
+    for step in steps {
+        let Some(model) = &step.model else { continue };
+        let idx = match buckets.iter().position(|b| &b.model == model) {
+            Some(i) => i,
+            None => {
+                buckets.push(ModelBucket {
+                    model: model.clone(),
+                    session_count: 1,
+                    ..ModelBucket::default()
+                });
+                buckets.len() - 1
+            }
+        };
+        let b = &mut buckets[idx];
+        b.tokens_in += step.tokens_in.unwrap_or(0);
+        b.tokens_out += step.tokens_out.unwrap_or(0);
+        if let Some(c) = step.cost_usd() {
+            b.cost_usd = Some(b.cost_usd.unwrap_or(0.0) + c);
+        }
+    }
+    buckets
 }
 
 #[derive(Debug)]
@@ -201,6 +234,7 @@ pub fn load_parallel(paths: &[PathBuf]) -> (Vec<ParsedSession>, Vec<ParseError>)
                 // always yield 0, so this is essentially free for
                 // everything except Claude Code.
                 let fork_root_count = crate::timeline::fork_root_count(&steps);
+                let model_usage = model_usage(&steps);
                 parsed.push(ParsedSession {
                     path,
                     format: fmt,
@@ -210,6 +244,7 @@ pub fn load_parallel(paths: &[PathBuf]) -> (Vec<ParsedSession>, Vec<ParseError>)
                     mtime_secs,
                     annotation_count,
                     fork_root_count,
+                    model_usage,
                 });
             }
             LoadOutcome::Skip => {}
@@ -320,21 +355,19 @@ pub fn aggregate(
         *format_map.entry(session.format.to_string()).or_insert(0) += 1;
 
         // Per-model: session_count counts unique sessions that used the
-        // model (not per-step). tokens/cost sum across all sessions that
-        // used the model — over-attributes for multi-model sessions, but
-        // multi-model sessions are rare and this is the simplest correct
-        // behavior.
-        for model in &session.totals.unique_models {
+        // model (not per-step). tokens/cost come from the session's
+        // per-model split, so multi-model sessions sum to the totals.
+        for usage in &session.model_usage {
             let bucket = model_map
-                .entry(model.clone())
+                .entry(usage.model.clone())
                 .or_insert_with(|| ModelBucket {
-                    model: model.clone(),
+                    model: usage.model.clone(),
                     ..ModelBucket::default()
                 });
             bucket.session_count += 1;
-            bucket.tokens_in += session.totals.tokens_in;
-            bucket.tokens_out += session.totals.tokens_out;
-            if let Some(c) = session.totals.cost_usd {
+            bucket.tokens_in += usage.tokens_in;
+            bucket.tokens_out += usage.tokens_out;
+            if let Some(c) = usage.cost_usd {
                 bucket.cost_usd = Some(bucket.cost_usd.unwrap_or(0.0) + c);
             }
         }
@@ -866,6 +899,7 @@ mod tests {
             mtime_secs: None,
             annotation_count: 0,
             fork_root_count: 0,
+            model_usage: model_usage(&steps),
         }
     }
 
@@ -875,6 +909,16 @@ mod tests {
         a.tokens_in = Some(100);
         a.tokens_out = Some(50);
         vec![user_text_step("q"), a]
+    }
+
+    #[test]
+    fn per_model_splits_multi_model_session_usage() {
+        let mut steps = priced_session("claude-opus-4-6");
+        steps.extend(priced_session("claude-sonnet-4-6"));
+        let stats = aggregate(&[mk_session("a", Format::ClaudeCode, steps)], &[], 1, 0);
+        let per_model_in: u64 = stats.per_model.iter().map(|m| m.tokens_in).sum();
+        assert_eq!(per_model_in, stats.total_tokens_in);
+        assert_eq!(stats.per_model.len(), 2);
     }
 
     #[test]
