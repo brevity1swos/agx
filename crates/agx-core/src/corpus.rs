@@ -172,10 +172,14 @@ fn walk(root: &Path, max_depth: usize, out: &mut Vec<PathBuf>) {
         return;
     };
     for entry in entries.flatten() {
+        // `DirEntry::file_type` does not follow symlinks, so symlinked
+        // directories are never descended into — a link loop can't fan
+        // out to `max_depth`. Symlinked files are still collected.
+        let Ok(ft) = entry.file_type() else { continue };
         let path = entry.path();
-        if path.is_dir() {
+        if ft.is_dir() {
             walk(&path, max_depth - 1, out);
-        } else if path.is_file() {
+        } else if ft.is_file() || (ft.is_symlink() && path.is_file()) {
             out.push(path);
         }
     }
