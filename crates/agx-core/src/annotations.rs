@@ -176,7 +176,7 @@ impl Annotations {
         }
     }
 
-    /// Write to disk atomically: serialize to a sibling `*.tmp`, then
+    /// Write to disk atomically: serialize to a sibling `*.<pid>.tmp`, then
     /// rename. `rename(2)` is atomic on the same filesystem, so partial
     /// writes never corrupt an existing notes file.
     pub fn save_for(&self, session_path: &Path) -> Result<PathBuf> {
@@ -185,7 +185,9 @@ impl Annotations {
             fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
         }
         let json = serde_json::to_string_pretty(self)?;
-        let tmp = dest.with_extension("json.tmp");
+        // Unique per process so two agx instances saving the same
+        // session never interleave writes into one shared temp file.
+        let tmp = dest.with_extension(format!("json.{}.tmp", std::process::id()));
         {
             let mut f = fs::File::create(&tmp)
                 .with_context(|| format!("creating temp file {}", tmp.display()))?;
