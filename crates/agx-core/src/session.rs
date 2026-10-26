@@ -130,14 +130,26 @@ pub fn load(path: &Path) -> Result<Vec<Entry>> {
     // set bounded by the longest single line (typically a few KB) while
     // still giving us accurate line-number context for format-drift
     // error messages.
+    //
+    // Lines are read as raw bytes and decoded lossily: one stray non-UTF-8
+    // byte (a mis-encoded paste in a tool result) shouldn't fail the whole
+    // session — `format::detect` already routes such files here.
     use std::fs::File;
     use std::io::{BufRead, BufReader};
     let file =
         File::open(path).with_context(|| format!("opening session file: {}", path.display()))?;
-    let reader = BufReader::new(file);
+    let mut reader = BufReader::new(file);
     let mut entries = Vec::with_capacity(1024);
-    for (i, line) in reader.lines().enumerate() {
-        let line = line.with_context(|| format!("reading line {} of session file", i + 1))?;
+    let mut buf = Vec::new();
+    for i in 0.. {
+        buf.clear();
+        let n = reader
+            .read_until(b'\n', &mut buf)
+            .with_context(|| format!("reading line {} of session file", i + 1))?;
+        if n == 0 {
+            break;
+        }
+        let line = String::from_utf8_lossy(&buf);
         if line.trim().is_empty() {
             continue;
         }
@@ -222,6 +234,28 @@ mod tests {
         };
         assert!(a.message.usage.is_none());
         assert!(a.message.model.is_none());
+    }
+
+    #[test]
+    fn load_tolerates_invalid_utf8_inside_a_line() {
+        // A stray non-UTF-8 byte in one string value must not fail the
+        // whole session; it decodes as U+FFFD.
+        use std::io::Write;
+        let mut bytes = br#"{"type":"user","uuid":"u1","parentUuid":null,"message":{"role":"user","content":"ok"}}"#.to_vec();
+        bytes.push(b'\n');
+        bytes.extend_from_slice(
+            br#"{"type":"user","uuid":"u2","parentUuid":"u1","message":{"role":"user","content":"bad "#,
+        );
+        bytes.push(0xff);
+        bytes.extend_from_slice(b"\"}}\n");
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(&bytes).unwrap();
+        let entries = load(f.path()).unwrap();
+        assert_eq!(entries.len(), 2);
+        let Entry::User(u) = &entries[1] else {
+            panic!("expected user");
+        };
+        assert!(matches!(&u.message.content, UserContent::Text(s) if s == "bad \u{fffd}"));
     }
 
     #[test]
