@@ -604,15 +604,18 @@ fn main() -> Result<()> {
         .transpose()?;
     slice::warn_if_time_filter_ignored(&steps, after_ms, before_ms);
     let sliced_any = !range.is_identity() || after_ms.is_some() || before_ms.is_some();
-    let steps = if sliced_any {
+    // `index_map[view_idx]` = original step index. `None` when nothing
+    // was sliced. Annotations and replay logs are keyed by original
+    // index, so every consumer of a sliced view translates through it.
+    let (steps, index_map) = if sliced_any {
         let before_count = steps.len();
-        let sliced = slice::slice_steps(steps, &range, after_ms, before_ms);
+        let (sliced, map) = slice::slice_steps_indexed(steps, &range, after_ms, before_ms);
         if cli.bench {
             eprintln!("[bench] slice: {} → {} steps", before_count, sliced.len());
         }
-        sliced
+        (sliced, Some(map))
     } else {
-        steps
+        (steps, None)
     };
 
     if cli.scan_pii {
@@ -624,7 +627,10 @@ fn main() -> Result<()> {
     }
 
     if let Some(diff_path) = &cli.diff {
-        let steps_b = load_session(diff_path)?;
+        let mut steps_b = load_session(diff_path)?;
+        if sliced_any {
+            steps_b = slice::slice_steps(steps_b, &range, after_ms, before_ms);
+        }
         if cli.diff_tui {
             // Interactive two-pane diff — requires both session formats
             // for the header labels.
@@ -657,7 +663,14 @@ fn main() -> Result<()> {
         // Load annotations eagerly for export so the rendered output
         // reflects on-disk notes. Fault-tolerant: a missing or malformed
         // notes file returns an empty set without erroring.
+        // Notes are keyed by original step index — re-key them onto the
+        // sliced positions, then redact with the same patterns as steps.
         let annotations = annotations::Annotations::load_for(&session_path);
+        let annotations = match &index_map {
+            Some(map) => annotations.remapped(map),
+            None => annotations,
+        }
+        .redacted(&cli.redact);
         let ann_ref = if annotations.is_empty() {
             None
         } else {
@@ -713,7 +726,16 @@ fn main() -> Result<()> {
 
     let reload_fn: Option<Box<dyn Fn() -> Result<Vec<Step>>>> = if cli.live {
         let path = session_path.clone();
-        Some(Box::new(move || load_session(&path)))
+        // Re-apply the same slice on every reload, or the first poll
+        // swaps the sliced view for the whole session.
+        Some(Box::new(move || {
+            let steps = load_session(&path)?;
+            Ok(if sliced_any {
+                slice::slice_steps(steps, &range, after_ms, before_ms)
+            } else {
+                steps
+            })
+        }))
     } else {
         None
     };
@@ -752,6 +774,7 @@ fn main() -> Result<()> {
         reload_fn.as_deref(),
         cli.no_cost,
         Some(&session_path),
+        index_map.as_deref(),
         cli.jump_to,
         notify_cfg,
         replay_cfg,

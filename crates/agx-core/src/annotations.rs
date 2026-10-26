@@ -140,6 +140,38 @@ impl Annotations {
         items.into_iter()
     }
 
+    /// Re-key notes from original step indices to positions in a sliced
+    /// view. `index_map[view_idx]` is the original index of the step at
+    /// `view_idx` (see `slice::slice_steps_indexed`). Notes on steps that
+    /// were sliced away are dropped.
+    #[must_use]
+    pub fn remapped(&self, index_map: &[usize]) -> Self {
+        let notes = index_map
+            .iter()
+            .enumerate()
+            .filter_map(|(view_idx, &orig_idx)| {
+                self.get(orig_idx)
+                    .map(|note| (view_idx.to_string(), note.clone()))
+            })
+            .collect();
+        Annotations {
+            version: self.version,
+            path: self.path.clone(),
+            notes,
+        }
+    }
+
+    /// Apply `--redact` literal masking to every note's text, mirroring
+    /// `export::redacted_steps` so notes can't leak a redacted secret.
+    #[must_use]
+    pub fn redacted(&self, patterns: &[String]) -> Self {
+        let mut out = self.clone();
+        for note in out.notes.values_mut() {
+            note.text = crate::export::apply_redactions(&note.text, patterns);
+        }
+        out
+    }
+
     /// Load annotations for a session from disk. Returns an empty set
     /// (not an error) when the file doesn't exist — the common case
     /// for sessions the user hasn't annotated yet.
@@ -277,6 +309,29 @@ mod tests {
             std::env::set_var("AGX_HOME", tmp.path());
         }
         (tmp, guard)
+    }
+
+    #[test]
+    fn remapped_rekeys_to_view_positions_and_drops_sliced_notes() {
+        let mut a = Annotations::new(Path::new("/tmp/foo.jsonl"));
+        a.set(1, "dropped");
+        a.set(10, "kept");
+        let r = a.remapped(&[5, 10, 11]);
+        assert_eq!(r.get(1).map(|n| n.text.as_str()), Some("kept"));
+        assert!(!r.has(0) && !r.has(10));
+        assert_eq!(r.iter().count(), 1);
+    }
+
+    #[test]
+    fn redacted_masks_note_text() {
+        let mut a = Annotations::new(Path::new("/tmp/foo.jsonl"));
+        a.set(0, "token SECRET rotated");
+        let r = a.redacted(&["SECRET".into()]);
+        assert_eq!(r.get(0).unwrap().text, "token [REDACTED] rotated");
+        assert!(
+            a.get(0).unwrap().text.contains("SECRET"),
+            "source untouched"
+        );
     }
 
     #[test]
