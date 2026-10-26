@@ -175,6 +175,19 @@ pub fn slice_steps(
     after_ms: Option<u64>,
     before_ms: Option<u64>,
 ) -> Vec<Step> {
+    slice_steps_indexed(steps, range, after_ms, before_ms).0
+}
+
+/// Same as `slice_steps`, but also returns each surviving step's
+/// original (pre-slice) index. Annotations and replay logs are keyed by
+/// the original index, so callers that render or persist those against
+/// a sliced view use this map to translate view positions back.
+pub fn slice_steps_indexed(
+    steps: Vec<Step>,
+    range: &StepRange,
+    after_ms: Option<u64>,
+    before_ms: Option<u64>,
+) -> (Vec<Step>, Vec<usize>) {
     let has_time_filter = after_ms.is_some() || before_ms.is_some();
     // Resolve the time-filter anchor once. `None` → time filter is a
     // no-op for this session (either no timestamps anywhere, or no
@@ -211,8 +224,8 @@ pub fn slice_steps(
             }
             true
         })
-        .map(|(_, step)| step)
-        .collect()
+        .map(|(idx, step)| (step, idx))
+        .unzip()
 }
 
 /// Print a one-line stderr warning when the user asked for a time

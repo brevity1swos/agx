@@ -97,6 +97,11 @@ pub struct App {
     /// file path. `None` in tests and for scratch usage where writes
     /// would have no meaningful destination.
     session_path: Option<std::path::PathBuf>,
+    /// Original step index for each position in `steps` when the session
+    /// was sliced (`--range` / `--after` / ...). Annotations are re-keyed
+    /// through it for display and are read-only, because notes on disk
+    /// are keyed by original index.
+    index_map: Option<Vec<usize>>,
 }
 
 impl App {
@@ -145,6 +150,7 @@ impl App {
             session_totals: SessionTotals::default(),
             annotations: crate::annotations::Annotations::default(),
             session_path: None,
+            index_map: None,
         };
         app.tool_stats = compute_tool_stats(&app.steps);
         app.heatmap = compute_heatmap(&app.steps);
@@ -444,6 +450,11 @@ impl App {
     /// any existing note so `a` acts as edit-in-place when a note is
     /// already there.
     fn enter_annotation_mode(&mut self) {
+        if self.index_map.is_some() {
+            self.status_msg =
+                Some("annotations are read-only in a sliced view (drop --range/--after/--before to edit)".into());
+            return;
+        }
         let Some(view_idx) = self.list_state.selected() else {
             self.status_msg = Some("no step selected to annotate".into());
             return;
@@ -969,11 +980,15 @@ pub struct NotifyConfig {
     pub on_idle_ms: Option<u64>,
 }
 
+// Each argument is an independent launch option from main.rs; bundling
+// them into a struct would just move the same list one level down.
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     steps: Vec<Step>,
     reload_fn: Option<&dyn Fn() -> Result<Vec<Step>>>,
     no_cost: bool,
     session_path: Option<&std::path::Path>,
+    index_map: Option<&[usize]>,
     initial_step: Option<usize>,
     notify: NotifyConfig,
     replay: crate::replay::ReplayConfig,
@@ -988,8 +1003,13 @@ pub fn run(
     // Attach annotation state when a session path is provided. Load is
     // fault-tolerant: a missing or malformed notes file returns an
     // empty `Annotations` with a stderr warning, not an error.
+    app.index_map = index_map.map(<[usize]>::to_vec);
     if let Some(path) = session_path {
-        app.annotations = crate::annotations::Annotations::load_for(path);
+        let loaded = crate::annotations::Annotations::load_for(path);
+        app.annotations = match index_map {
+            Some(map) => loaded.remapped(map),
+            None => loaded,
+        };
         app.session_path = Some(path.to_path_buf());
     }
     // Apply `--jump-to` if provided. 0-indexed, clamped to the visible
@@ -1991,7 +2011,14 @@ fn run_loop(
                             let log_result = if let Some(path) = session_path
                                 && let Some(step) = app.steps.get(step_idx)
                             {
-                                crate::replay::log_replay(path, step_idx, step, &input, &output)
+                                // Log against the original step index so the
+                                // replay log lines up with unsliced runs.
+                                let orig_idx = app
+                                    .index_map
+                                    .as_ref()
+                                    .and_then(|m| m.get(step_idx).copied())
+                                    .unwrap_or(step_idx);
+                                crate::replay::log_replay(path, orig_idx, step, &input, &output)
                             } else {
                                 Ok(())
                             };
