@@ -332,16 +332,16 @@ fn scan_jwt(text: &str, step_index: usize, out: &mut Vec<Match>) {
     let bytes = text.as_bytes();
     let mut i = 0;
     while i + 3 <= bytes.len() {
-        if &bytes[i..i + 3] == b"eyJ" {
-            if let Some(end) = parse_jwt_at(bytes, i) {
-                out.push(Match {
-                    category: Category::JwtToken,
-                    step_index,
-                    snippet: text[i..end].to_string(),
-                });
-                i = end;
-                continue;
-            }
+        if &bytes[i..i + 3] == b"eyJ"
+            && let Some(end) = parse_jwt_at(bytes, i)
+        {
+            out.push(Match {
+                category: Category::JwtToken,
+                step_index,
+                snippet: text[i..end].to_string(),
+            });
+            i = end;
+            continue;
         }
         i += 1;
     }
