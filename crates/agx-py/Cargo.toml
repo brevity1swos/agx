@@ -24,6 +24,6 @@ agx-core = { path = "../agx-core", version = "0.2.1" }
 # PyO3 extension API. `extension-module` means "build a Python
 # extension, not a linkable lib"; `abi3` targets a stable ABI so one
 # wheel runs on any Python ≥ 3.10.
-pyo3 = { version = "0.26", features = ["extension-module", "abi3-py310"] }
+pyo3 = { version = "0.29", features = ["extension-module", "abi3-py310"] }
 serde = "1"
 serde_json = "1"
