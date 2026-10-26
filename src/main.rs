@@ -37,8 +37,9 @@ struct Cli {
     #[arg(long)]
     summary: bool,
 
-    /// Compare two sessions side-by-side (text summary)
-    #[arg(long)]
+    /// Compare two sessions side-by-side (text summary). Slice flags
+    /// apply to both sessions.
+    #[arg(long, conflicts_with_all = ["summary", "export"])]
     diff: Option<PathBuf>,
 
     /// Launch the interactive side-by-side diff TUI instead of the
@@ -47,8 +48,8 @@ struct Cli {
     #[arg(long, requires = "diff", conflicts_with_all = ["summary", "export"])]
     diff_tui: bool,
 
-    /// Live mode: watch for file changes and auto-refresh
-    #[arg(long)]
+    /// Live mode: watch for file changes and auto-refresh. TUI only.
+    #[arg(long, conflicts_with_all = ["summary", "export", "diff", "scan_pii"])]
     live: bool,
 
     /// Generate shell completions and print to stdout
@@ -64,9 +65,8 @@ struct Cli {
     /// detail. Reports matches by category (email, api-key shape,
     /// JWT, IPv4, SSH private-key header) with step index. Does NOT
     /// mutate — pair with `--redact` when the intent is to scrub.
-    /// Output: human-readable text by default, JSON when combined
-    /// with `--export json`. Phase 6.4 dataset-prep workflow.
-    #[arg(long)]
+    /// Output: human-readable text. Phase 6.4 dataset-prep workflow.
+    #[arg(long, conflicts_with_all = ["summary", "export", "diff"])]
     scan_pii: bool,
 
     /// Suppress cost estimates in --summary, stats overlay, and TUI status
@@ -77,7 +77,7 @@ struct Cli {
 
     /// Export the session to stdout in the given format instead of
     /// launching the TUI. Mutually exclusive with --summary.
-    #[arg(long, value_enum, value_name = "FORMAT")]
+    #[arg(long, value_enum, value_name = "FORMAT", conflicts_with = "summary")]
     export: Option<ExportFormat>,
 
     /// Mask literal substrings in exported output (tool inputs and
