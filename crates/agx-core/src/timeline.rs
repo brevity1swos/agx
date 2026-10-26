@@ -608,65 +608,90 @@ pub fn format_duration_ms(ms: u64) -> String {
     }
 }
 
-/// Parse ISO 8601 UTC timestamp to unix milliseconds. Handles
-/// `YYYY-MM-DDTHH:MM:SS[.fff][Z]` — the format all three CLIs produce.
-#[allow(
-    clippy::many_single_char_names,
-    clippy::cast_sign_loss,
-    clippy::cast_possible_wrap
-)]
+/// Parse an ISO 8601 timestamp to unix milliseconds. Handles
+/// `YYYY-MM-DDTHH:MM:SS[.fff][Z|±HH:MM|±HHMM]` — the format all the CLIs
+/// produce. A numeric offset is applied so the result is always UTC.
+/// Returns `None` for out-of-range fields (month 13, Feb 30, hour 24, …)
+/// and for instants before the unix epoch, rather than wrapping.
+#[allow(clippy::many_single_char_names)]
 pub(crate) fn parse_iso_ms(s: &str) -> Option<u64> {
-    if s.len() < 19 {
+    // Fixed-width, digits-only field. Rejects signs so `-001` can't sneak
+    // through as a negative year.
+    fn num(s: &str, range: std::ops::Range<usize>) -> Option<i64> {
+        let part = s.get(range)?;
+        if part.is_empty() || !part.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        part.parse().ok()
+    }
+
+    let y = num(s, 0..4)?;
+    let mo = num(s, 5..7)?;
+    let d = num(s, 8..10)?;
+    let h = num(s, 11..13)?;
+    let mi = num(s, 14..16)?;
+    let se = num(s, 17..19)?;
+    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let days_in_month = match mo {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return None,
+    };
+    // 60 seconds is allowed for leap seconds; it rolls into the next minute.
+    if !(1..=days_in_month).contains(&d) || h > 23 || mi > 59 || se > 60 {
         return None;
     }
-    let y: i64 = s.get(0..4)?.parse().ok()?;
-    let mo: u64 = s.get(5..7)?.parse().ok()?;
-    let d: u64 = s.get(8..10)?.parse().ok()?;
-    let h: u64 = s.get(11..13)?.parse().ok()?;
-    let mi: u64 = s.get(14..16)?.parse().ok()?;
-    let se: u64 = s.get(17..19)?.parse().ok()?;
 
-    // Howard Hinnant's days_from_civil
+    // Howard Hinnant's days_from_civil. Year is 0..=9999 here, so every
+    // intermediate fits comfortably in i64.
     let (adj_y, adj_m) = if mo <= 2 {
         (y - 1, mo + 9)
     } else {
         (y, mo - 3)
     };
-    let era = if adj_y >= 0 { adj_y } else { adj_y - 399 } / 400;
-    let yoe = (adj_y - era * 400) as u64;
+    let era = adj_y.div_euclid(400);
+    let yoe = adj_y - era * 400;
     let doy = (153 * adj_m + 2) / 5 + d - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let days = (era * 146_097 + doe as i64 - 719_468) as u64;
+    let days = era * 146_097 + doe - 719_468;
+    let mut secs = days * 86_400 + h * 3_600 + mi * 60 + se;
 
-    let secs = days * 86_400 + h * 3_600 + mi * 60 + se;
-
-    // Fractional ms after the seconds
+    // Fractional seconds: keep millisecond precision, drop the rest.
     let bytes = s.as_bytes();
-    let ms = if bytes.len() > 19 && bytes[19] == b'.' {
-        let end = bytes[20..]
+    let mut pos = 19;
+    let mut ms = 0;
+    if bytes.get(pos) == Some(&b'.') {
+        pos += 1;
+        let frac_len = bytes[pos..]
             .iter()
             .position(|c| !c.is_ascii_digit())
-            .map_or(bytes.len(), |p| 20 + p);
-        let frac = s.get(20..end)?;
-        if frac.is_empty() {
-            0
-        } else {
-            let mut val: u64 = frac.parse().ok()?;
-            match frac.len() {
-                1 => val *= 100,
-                2 => val *= 10,
-                3 => {}
-                n => {
-                    val /= 10u64.pow(u32::try_from(n - 3).unwrap_or(0));
-                }
-            }
-            val
+            .unwrap_or(bytes.len() - pos);
+        for (b, scale) in bytes[pos..pos + frac_len.min(3)].iter().zip([100, 10, 1]) {
+            ms += i64::from(b - b'0') * scale;
         }
-    } else {
-        0
-    };
+        pos += frac_len;
+    }
 
-    Some(secs * 1_000 + ms)
+    // Timezone designator. `Z`, nothing, or anything unrecognized is UTC;
+    // a `+`/`-` sign must be followed by a well-formed HH[:]MM offset.
+    if let Some(&sign @ (b'+' | b'-')) = bytes.get(pos) {
+        let rest = &s[pos + 1..];
+        let oh = num(rest, 0..2)?;
+        let om = if rest.as_bytes().get(2) == Some(&b':') {
+            num(rest, 3..5)?
+        } else {
+            num(rest, 2..4)?
+        };
+        if oh > 23 || om > 59 {
+            return None;
+        }
+        let offset = oh * 3_600 + om * 60;
+        secs += if sign == b'+' { -offset } else { offset };
+    }
+
+    u64::try_from(secs * 1_000 + ms).ok()
 }
 
 fn collect_tool_meta(entries: &[Entry]) -> HashMap<String, ToolMeta> {
@@ -866,6 +891,47 @@ mod tests {
         let steps = build(&entries);
         assert_eq!(steps[0].tokens_in, None);
         assert_eq!(steps[0].model, None);
+    }
+
+    #[test]
+    fn parse_iso_ms_parses_utc_and_fractions() {
+        assert_eq!(parse_iso_ms("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(
+            parse_iso_ms("2026-04-11T00:00:01.5Z"),
+            Some(1_775_865_601_500)
+        );
+        assert_eq!(
+            parse_iso_ms("2026-04-11T00:00:01.123456Z"),
+            Some(1_775_865_601_123)
+        );
+    }
+
+    #[test]
+    fn parse_iso_ms_applies_timezone_offsets() {
+        let utc = parse_iso_ms("2026-04-11T00:00:00Z").unwrap();
+        assert_eq!(parse_iso_ms("2026-04-11T09:00:00+09:00"), Some(utc));
+        assert_eq!(parse_iso_ms("2026-04-10T19:30:00-04:30"), Some(utc));
+        assert_eq!(parse_iso_ms("2026-04-11T09:00:00.000+0900"), Some(utc));
+        assert_eq!(parse_iso_ms("2026-04-11T00:00:00+00:00"), Some(utc));
+    }
+
+    #[test]
+    fn parse_iso_ms_rejects_malformed_dates() {
+        for s in [
+            "2026-00-11T00:00:00Z",
+            "2026-13-11T00:00:00Z",
+            "2026-04-00T00:00:00Z",
+            "2026-04-32T00:00:00Z",
+            "2026-02-30T00:00:00Z",
+            "2026-04-11T24:00:00Z",
+            "2026-04-11T00:60:00Z",
+            "-001-01-01T00:00:00Z",
+            "1969-12-31T23:59:59Z",
+            "1970-01-01T00:00:00+01:00",
+            "2026-04-11T00:00:00+2x:00",
+        ] {
+            assert_eq!(parse_iso_ms(s), None, "expected None for {s}");
+        }
     }
 
     #[test]
