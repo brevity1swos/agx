@@ -2,7 +2,7 @@
 name = "agx-mcp"
 version = "0.2.1"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 description = "MCP server exposing agx's session introspection tools to AI agents (Claude Code, Cline, Gemini CLI)."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/brevity1swos/agx"

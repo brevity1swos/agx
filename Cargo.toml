@@ -11,7 +11,7 @@ default-members = [".", "crates/agx-core", "crates/agx-mcp"]
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/brevity1swos/agx"
 
@@ -25,7 +25,7 @@ repository = "https://github.com/brevity1swos/agx"
 name = "agx-tui"
 version = "0.2.1"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 description = "Step-through debugger for your agent — terminal-native session timeline viewer for Claude Code, Codex, Gemini, LangChain, Vercel AI SDK, and OpenTelemetry GenAI traces"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/brevity1swos/agx"

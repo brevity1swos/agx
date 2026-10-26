@@ -156,7 +156,7 @@ consumer of sift.
   - `too_many_lines` on `run_loop` in tui.rs — the render function is logically one operation per frame; splitting hurts readability
 - **Tests**: unit tests inline via `#[cfg(test)] mod tests` in each module. Parser tests use `tempfile::NamedTempFile` to write synthetic content and pass paths to the `load()` function. Shared integration fixtures at `assets/sample_session.jsonl` (Claude Code, enriched with usage), `assets/sample_codex_session.jsonl` (Codex), `assets/sample_gemini_session.json` (Gemini), `assets/sample_generic_session.json` (generic OpenAI), `assets/sample_otel_json_traces.json` (OTel GenAI) — zero personal data. End-to-end integration tests in `tests/summary_test.rs` (CLI output snapshots) and `tests/corpus_test.rs` (no-op scaffold for anonymized real-world fixtures under `tests/corpus/`).
 - **Commits**: Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`, `build:`, `perf:`)
-- **MSRV**: Rust 1.85 (required by edition 2024)
+- **MSRV**: Rust 1.88 (floor set by dependencies: ratatui / darling / time / ort). CI `msrv` job checks it
 - **Errors**: `anyhow::Result` at crate boundary, serde errors wrapped with `.with_context()` for line-number context
 
 ## Common Tasks
