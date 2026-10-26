@@ -47,7 +47,7 @@ impl fmt::Display for Format {
 /// Probe order (most specific first, so ambiguous shapes land on the
 /// right parser):
 ///
-/// - Non-UTF-8 bytes → [`Format::OtelProto`] (binary OTLP)
+/// - Non-UTF-8 bytes in the first 8 KiB → [`Format::OtelProto`] (binary OTLP)
 /// - Single JSON with `resourceSpans` → [`Format::OtelJson`]
 /// - Single JSON with `run_type` + `inputs`/`outputs` → [`Format::Langchain`]
 /// - Single JSON with `finishReason` / `steps[].stepType` / camelCase `toolCallId` → [`Format::VercelAi`]
@@ -72,7 +72,7 @@ pub fn detect(path: &Path) -> Result<Format> {
         return Err(anyhow!("session file is empty"));
     }
 
-    let Ok(content) = std::str::from_utf8(&bytes) else {
+    if !looks_like_text(&bytes) {
         // Not UTF-8 → must be binary. Only binary format agx handles today
         // is OTLP protobuf. We route to OtelProto regardless of whether the
         // `otel-proto` feature is enabled at build time; the load dispatch
@@ -80,7 +80,13 @@ pub fn detect(path: &Path) -> Result<Format> {
         // feature is off, which is a better failure mode than silently
         // mis-claiming "not json".
         return Ok(Format::OtelProto);
-    };
+    }
+    // Text, but possibly with a stray invalid byte somewhere past the sniff
+    // window (a corrupted log line, a mis-encoded paste). Detection only
+    // needs the shape, so a lossy view is fine; it borrows when the whole
+    // file is valid.
+    let content = String::from_utf8_lossy(&bytes);
+    let content = content.as_ref();
 
     // Single JSON object: OTel GenAI (resourceSpans), LangSmith/LangChain
     // export (run_type at top level), Vercel AI SDK (finishReason or
@@ -124,6 +130,23 @@ pub fn detect(path: &Path) -> Result<Format> {
     match ty {
         "session_meta" | "event_msg" | "response_item" | "turn_context" => Ok(Format::Codex),
         _ => Ok(Format::ClaudeCode),
+    }
+}
+
+/// How many leading bytes `looks_like_text` checks for UTF-8 validity.
+const SNIFF_BYTES: usize = 8 * 1024;
+
+/// Text vs binary, decided on a prefix rather than the whole file so one
+/// invalid byte deep inside a multi-megabyte JSONL doesn't send it to the
+/// protobuf parser. Protobuf fails UTF-8 almost immediately (varint lengths
+/// and fixed64 timestamps), so 8 KiB is ample. A multibyte char cut off by
+/// the window (or by EOF) is tolerated — only a definitely-invalid sequence
+/// counts as binary.
+fn looks_like_text(bytes: &[u8]) -> bool {
+    let prefix = &bytes[..bytes.len().min(SNIFF_BYTES)];
+    match std::str::from_utf8(prefix) {
+        Ok(_) => true,
+        Err(e) => e.error_len().is_none(),
     }
 }
 
@@ -274,6 +297,42 @@ mod tests {
             r#"{"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"}]}"#,
         );
         assert_eq!(detect(f.path()).unwrap(), Format::Generic);
+    }
+
+    /// A Claude Code JSONL whose first line pads past the sniff window with
+    /// a 2-byte char straddling the cut, followed by a stray invalid byte
+    /// on a later line.
+    fn jsonl_with_late_invalid_byte() -> Vec<u8> {
+        let first_prefix =
+            r#"{"type":"user","uuid":"u1","parentUuid":null,"message":{"role":"user","content":""#;
+        let mut bytes = first_prefix.as_bytes().to_vec();
+        bytes.resize(SNIFF_BYTES - 1, b'a');
+        bytes.extend_from_slice("é".as_bytes()); // straddles SNIFF_BYTES
+        bytes.extend_from_slice(b"\"}}\n");
+        bytes.extend_from_slice(
+            br#"{"type":"user","uuid":"u2","parentUuid":"u1","message":{"role":"user","content":"bad "#,
+        );
+        bytes.push(0xff);
+        bytes.extend_from_slice(b"\"}}\n");
+        bytes
+    }
+
+    #[test]
+    fn late_invalid_utf8_byte_does_not_route_text_to_otel_proto() {
+        let mut f = NamedTempFile::new().unwrap();
+        f.write_all(&jsonl_with_late_invalid_byte()).unwrap();
+        assert_eq!(detect(f.path()).unwrap(), Format::ClaudeCode);
+    }
+
+    #[test]
+    fn late_invalid_utf8_byte_in_single_json_still_detects_shape() {
+        let mut bytes = br#"{"resourceSpans":[],"pad":""#.to_vec();
+        bytes.resize(SNIFF_BYTES + 100, b' ');
+        bytes.push(0xff);
+        bytes.extend_from_slice(b"\"}");
+        let mut f = NamedTempFile::new().unwrap();
+        f.write_all(&bytes).unwrap();
+        assert_eq!(detect(f.path()).unwrap(), Format::OtelJson);
     }
 
     #[test]
