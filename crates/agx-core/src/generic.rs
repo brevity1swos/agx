@@ -39,6 +39,16 @@ struct OpenAiUsage {
     prompt_tokens: Option<u64>,
     #[serde(default)]
     completion_tokens: Option<u64>,
+    /// Non-standard top-level field some exporters write.
+    #[serde(default)]
+    cached_tokens: Option<u64>,
+    /// OpenAI's own location for the cached share of `prompt_tokens`.
+    #[serde(default)]
+    prompt_tokens_details: Option<PromptTokensDetails>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PromptTokensDetails {
     #[serde(default)]
     cached_tokens: Option<u64>,
 }
@@ -104,11 +114,17 @@ pub fn load(path: &Path) -> Result<Vec<Step>> {
                     let usage = msg
                         .usage
                         .as_ref()
-                        .map(|u| Usage {
-                            tokens_in: u.prompt_tokens,
-                            tokens_out: u.completion_tokens,
-                            cache_read: u.cached_tokens,
-                            cache_create: None,
+                        .map(|u| {
+                            let cached = u.cached_tokens.or_else(|| {
+                                u.prompt_tokens_details
+                                    .as_ref()
+                                    .and_then(|d| d.cached_tokens)
+                            });
+                            Usage::from_cache_inclusive(
+                                u.prompt_tokens,
+                                cached,
+                                u.completion_tokens,
+                            )
                         })
                         .unwrap_or_default();
                     attach_usage_to_first(&mut steps, first_idx, msg.model.as_deref(), &usage);
@@ -253,7 +269,8 @@ mod tests {
         let steps = load(f.path()).unwrap();
         assert_eq!(steps.len(), 1);
         assert_eq!(steps[0].model.as_deref(), Some("gpt-5"));
-        assert_eq!(steps[0].tokens_in, Some(42));
+        // prompt_tokens includes the 9 cached; agx stores uncached input.
+        assert_eq!(steps[0].tokens_in, Some(33));
         assert_eq!(steps[0].tokens_out, Some(17));
         assert_eq!(steps[0].cache_read, Some(9));
     }

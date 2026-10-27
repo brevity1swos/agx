@@ -316,6 +316,7 @@ fn extract_usage(outputs: &serde_json::Value) -> Usage {
         tokens_out: get(usage, &["completion_tokens", "output_tokens"]),
         cache_read: get(usage, &["prompt_cache_read", "cache_read_tokens"]),
         cache_create: None,
+        cache_create_1h: None,
     }
 }
 

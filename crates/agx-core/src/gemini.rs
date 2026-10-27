@@ -29,6 +29,35 @@ struct Message {
     /// non-model messages.
     #[serde(default, rename = "usageMetadata")]
     usage_metadata: Option<GeminiUsage>,
+    /// What Gemini CLI actually writes to its session files, instead of
+    /// the API's `usageMetadata`.
+    #[serde(default)]
+    tokens: Option<GeminiCliTokens>,
+}
+
+/// Gemini CLI's per-message token counters. `input` includes `cached`
+/// (it comes from the API's `promptTokenCount`), and `thoughts` are
+/// billed at the output rate, so they fold into `tokens_out`.
+#[derive(Debug, Deserialize)]
+struct GeminiCliTokens {
+    #[serde(default)]
+    input: Option<u64>,
+    #[serde(default)]
+    output: Option<u64>,
+    #[serde(default)]
+    cached: Option<u64>,
+    #[serde(default)]
+    thoughts: Option<u64>,
+}
+
+impl GeminiCliTokens {
+    fn usage(&self) -> Usage {
+        let output = match (self.output, self.thoughts) {
+            (None, None) => None,
+            (o, t) => Some(o.unwrap_or(0) + t.unwrap_or(0)),
+        };
+        Usage::from_cache_inclusive(self.input, self.cached, output)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -97,12 +126,14 @@ pub fn load(path: &Path) -> Result<Vec<Step>> {
                     let usage = msg
                         .usage_metadata
                         .as_ref()
-                        .map(|u| Usage {
-                            tokens_in: u.prompt_tokens,
-                            tokens_out: u.output_tokens,
-                            cache_read: u.cached_tokens,
-                            cache_create: None,
+                        .map(|u| {
+                            Usage::from_cache_inclusive(
+                                u.prompt_tokens,
+                                u.cached_tokens,
+                                u.output_tokens,
+                            )
                         })
+                        .or_else(|| msg.tokens.as_ref().map(GeminiCliTokens::usage))
                         .unwrap_or_default();
                     attach_usage_to_first(&mut steps, first_idx, msg.model.as_deref(), &usage);
                 }
@@ -280,7 +311,8 @@ mod tests {
         let steps = load(f.path()).unwrap();
         assert_eq!(steps.len(), 1);
         assert_eq!(steps[0].model.as_deref(), Some("gemini-2-5-pro"));
-        assert_eq!(steps[0].tokens_in, Some(80));
+        // promptTokenCount includes the 20 cached; agx stores uncached input.
+        assert_eq!(steps[0].tokens_in, Some(60));
         assert_eq!(steps[0].tokens_out, Some(40));
         assert_eq!(steps[0].cache_read, Some(20));
     }
@@ -330,5 +362,28 @@ mod tests {
         let steps = load(f.path()).unwrap();
         assert_eq!(steps.len(), 2);
         assert!(steps[1].detail.contains("some"));
+    }
+
+    #[test]
+    fn parses_gemini_cli_tokens_object() {
+        // What Gemini CLI writes instead of `usageMetadata`. `input`
+        // includes `cached`; `thoughts` bill as output.
+        let json = r#"{
+            "sessionId":"s1",
+            "messages":[
+                {
+                    "type":"gemini",
+                    "content":"hello",
+                    "model":"gemini-3-flash-preview",
+                    "tokens":{"input":7524,"output":54,"cached":1000,"thoughts":19,"tool":0,"total":7597}
+                }
+            ]
+        }"#;
+        let f = write_file(json);
+        let steps = load(f.path()).unwrap();
+        assert_eq!(steps[0].tokens_in, Some(6524));
+        assert_eq!(steps[0].cache_read, Some(1000));
+        assert_eq!(steps[0].tokens_out, Some(73));
+        assert!(steps[0].cost_usd().is_some());
     }
 }

@@ -17,8 +17,10 @@ pub struct Step {
     /// Model name for this step, if known. Attached to the first step emitted
     /// from each assistant message (see `attach_usage_to_first` below).
     pub model: Option<String>,
-    /// Input tokens. Anthropic / OpenAI naming: one-time prompt tokens sent
-    /// to the model for this assistant response.
+    /// Uncached input tokens for this assistant response (Anthropic's
+    /// convention). Parsers for providers whose prompt count includes
+    /// cached tokens subtract them — see `Usage::from_cache_inclusive` —
+    /// so `tokens_in + cache_read + cache_create` is the full prompt.
     pub tokens_in: Option<u64>,
     /// Output tokens: tokens the model generated in this assistant response.
     pub tokens_out: Option<u64>,
@@ -27,6 +29,12 @@ pub struct Step {
     pub cache_read: Option<u64>,
     /// Tokens written to the prompt cache in this response (Anthropic).
     pub cache_create: Option<u64>,
+    /// The part of `cache_create` written with Anthropic's 1-hour cache
+    /// TTL, which bills at a higher rate than the 5-minute default. Claude
+    /// Code writes 1-hour entries. `None` when the source doesn't split
+    /// cache writes by TTL (everything is then billed at the 5-minute rate).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_create_1h: Option<u64>,
     /// True when this step is the root of a conversation branch — i.e.
     /// its originating entry shares a `parentUuid` with at least one
     /// other entry in the same session. Only set by the Claude Code
@@ -52,12 +60,13 @@ impl Step {
     /// cost. Delegates to the pricing table in `crate::pricing`.
     #[must_use]
     pub fn cost_usd(&self) -> Option<f64> {
-        crate::pricing::cost_usd(
+        crate::pricing::cost_usd_with_ttl(
             self.model.as_deref(),
             self.tokens_in,
             self.tokens_out,
             self.cache_read,
             self.cache_create,
+            self.cache_create_1h,
         )
     }
 }
@@ -119,9 +128,32 @@ pub(crate) struct Usage {
     pub tokens_out: Option<u64>,
     pub cache_read: Option<u64>,
     pub cache_create: Option<u64>,
+    /// 1-hour-TTL share of `cache_create` (see `Step::cache_create_1h`).
+    pub cache_create_1h: Option<u64>,
 }
 
 impl Usage {
+    /// Build a `Usage` from a provider whose prompt count *includes* the
+    /// cached tokens (OpenAI `prompt_tokens` / `input_tokens`, Gemini
+    /// `promptTokenCount`). agx's `tokens_in` follows Anthropic's
+    /// convention — uncached input only, with cache reads counted
+    /// separately — so the cached share is subtracted here. Without this,
+    /// pricing bills cached tokens once at the input rate and again at
+    /// the cache-read rate.
+    pub fn from_cache_inclusive(
+        prompt: Option<u64>,
+        cached: Option<u64>,
+        output: Option<u64>,
+    ) -> Self {
+        Usage {
+            tokens_in: prompt.map(|p| p.saturating_sub(cached.unwrap_or(0))),
+            tokens_out: output,
+            cache_read: cached,
+            cache_create: None,
+            cache_create_1h: None,
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.tokens_in.is_none()
             && self.tokens_out.is_none()
@@ -149,6 +181,7 @@ pub(crate) fn attach_usage_to_first(
             step.tokens_out = usage.tokens_out;
             step.cache_read = usage.cache_read;
             step.cache_create = usage.cache_create;
+            step.cache_create_1h = usage.cache_create_1h;
         }
     }
 }
@@ -515,6 +548,10 @@ pub fn build(entries: &[Entry]) -> Vec<Step> {
                             tokens_out: u.output_tokens,
                             cache_read: u.cache_read_input_tokens,
                             cache_create: u.cache_creation_input_tokens,
+                            cache_create_1h: u
+                                .cache_creation
+                                .as_ref()
+                                .and_then(|c| c.ephemeral_1h_input_tokens),
                         })
                         .unwrap_or_default();
                     attach_usage_to_first(
@@ -828,6 +865,7 @@ mod tests {
                     output_tokens: Some(50),
                     cache_creation_input_tokens: Some(10),
                     cache_read_input_tokens: Some(200),
+                    cache_creation: None,
                 }),
                 content: vec![
                     AssistantContentItem::Text {
@@ -1084,13 +1122,25 @@ mod tests {
     }
 
     #[test]
+    fn from_cache_inclusive_subtracts_cached_share() {
+        let u = Usage::from_cache_inclusive(Some(100), Some(30), Some(5));
+        assert_eq!(
+            (u.tokens_in, u.cache_read, u.tokens_out),
+            (Some(70), Some(30), Some(5))
+        );
+        // A cached count larger than the prompt never underflows.
+        let u = Usage::from_cache_inclusive(Some(10), Some(30), None);
+        assert_eq!(u.tokens_in, Some(0));
+    }
+
+    #[test]
     fn step_cost_usd_delegates_to_pricing_table() {
         let mut step = assistant_text_step("hi");
         step.model = Some("claude-opus-4-6".into());
         step.tokens_in = Some(1_000_000);
         step.tokens_out = Some(1_000_000);
         let c = step.cost_usd().unwrap();
-        assert!((c - 90.0).abs() < 1e-6);
+        assert!((c - 30.0).abs() < 1e-6);
     }
 
     #[test]

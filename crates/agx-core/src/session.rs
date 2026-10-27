@@ -105,6 +105,17 @@ pub struct ClaudeUsage {
     pub cache_creation_input_tokens: Option<u64>,
     #[serde(default)]
     pub cache_read_input_tokens: Option<u64>,
+    /// Per-TTL split of `cache_creation_input_tokens`.
+    #[serde(default)]
+    pub cache_creation: Option<ClaudeCacheCreation>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClaudeCacheCreation {
+    #[serde(default)]
+    pub ephemeral_5m_input_tokens: Option<u64>,
+    #[serde(default)]
+    pub ephemeral_1h_input_tokens: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -222,6 +233,7 @@ mod tests {
         assert_eq!(u.input_tokens, Some(100));
         assert_eq!(u.output_tokens, Some(50));
         assert_eq!(u.cache_creation_input_tokens, Some(10));
+        assert!(u.cache_creation.is_none());
         assert_eq!(u.cache_read_input_tokens, Some(200));
     }
 
@@ -267,5 +279,15 @@ mod tests {
         };
         assert_eq!(a.message.content.len(), 1);
         assert!(matches!(&a.message.content[0], AssistantContentItem::Other));
+    }
+
+    #[test]
+    fn parses_cache_creation_ttl_split() {
+        let line = r#"{"type":"assistant","uuid":"a1","message":{"role":"assistant","model":"claude-opus-5-5","usage":{"input_tokens":1,"output_tokens":2,"cache_creation_input_tokens":30,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":30}},"content":[{"type":"text","text":"hi"}]}}"#;
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        std::io::Write::write_all(&mut f, line.as_bytes()).unwrap();
+        let steps = crate::timeline::build(&load(f.path()).unwrap());
+        assert_eq!(steps[0].cache_create, Some(30));
+        assert_eq!(steps[0].cache_create_1h, Some(30));
     }
 }
