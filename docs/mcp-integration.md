@@ -109,7 +109,7 @@ need to know agx ran.
 ### At review time
 
 User opens `sift review`. Presses `t` on a pending entry. That
-spawns `agx --jump-to <step> <session>` (agx Phase 5.5) so the
+spawns `agx --jump-to <step> <session>` (shipped in agx Phase 5.5) so the
 reviewer sees the full turn context. `sift review` and agx share
 the same session file — no coordination needed beyond the file
 path.
