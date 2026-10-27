@@ -191,6 +191,7 @@ pub(crate) fn append_span(
                 .or_else(|| get_u64(attrs, "gen_ai.usage.completion_tokens")),
             cache_read: get_u64(attrs, "gen_ai.usage.cache_read_tokens"),
             cache_create: get_u64(attrs, "gen_ai.usage.cache_creation_tokens"),
+            cache_create_1h: None,
         };
         let model = get_str(attrs, "gen_ai.request.model")
             .or_else(|| get_str(attrs, "gen_ai.response.model"));

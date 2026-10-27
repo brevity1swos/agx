@@ -40,9 +40,43 @@ pub fn load(path: &Path) -> Result<Vec<Step>> {
 
     let tool_meta = collect_tool_meta(&entries);
     let mut steps = Vec::new();
+    // Current Codex rollouts carry the model on `turn_context` entries and
+    // usage on `event_msg` / `token_count` events rather than on the
+    // messages themselves. `anchor` is the first model-output step since
+    // usage was last attached; `prev_total` turns the cumulative
+    // `total_token_usage` into per-response deltas (Codex repeats
+    // token_count events, so `last_token_usage` alone double-counts).
+    let mut current_model: Option<String> = None;
+    let mut anchor: Option<usize> = None;
+    let mut prev_total = CodexTotals::default();
+    let mut pending = CodexTotals::default();
     for entry in &entries {
-        if entry.kind != "response_item" {
-            continue;
+        match entry.kind.as_str() {
+            "turn_context" => {
+                if let Some(m) = entry.payload.get("model").and_then(|v| v.as_str()) {
+                    current_model = Some(m.to_string());
+                }
+                continue;
+            }
+            "event_msg" => {
+                if let Some(total) = token_count_totals(&entry.payload) {
+                    pending = pending.plus(&total.minus(&prev_total));
+                    prev_total = total;
+                    if let Some(idx) = anchor.take()
+                        && !pending.is_zero()
+                    {
+                        let model = steps
+                            .get(idx)
+                            .and_then(|s: &Step| s.model.clone())
+                            .or_else(|| current_model.clone());
+                        attach_usage_to_first(&mut steps, idx, model.as_deref(), &pending.usage());
+                        pending = CodexTotals::default();
+                    }
+                }
+                continue;
+            }
+            "response_item" => {}
+            _ => continue,
         }
         let payload_type = entry.payload.get("type").and_then(|t| t.as_str());
         let ts = entry.timestamp.as_deref().and_then(parse_iso_ms);
@@ -102,10 +136,20 @@ pub fn load(path: &Path) -> Result<Vec<Step>> {
             step.timestamp_ms = ts;
             let is_assistant_message = payload_type == Some("message")
                 && entry.payload.get("role").and_then(|v| v.as_str()) == Some("assistant");
+            let is_model_output = is_assistant_message || payload_type == Some("function_call");
             steps.push(step);
+            let idx = steps.len() - 1;
+            if is_model_output && anchor.is_none() {
+                anchor = Some(idx);
+            }
             if is_assistant_message {
-                let idx = steps.len() - 1;
-                let model = entry.payload.get("model").and_then(|v| v.as_str());
+                // Older rollouts put usage (and sometimes the model) on the
+                // message payload itself.
+                let model = entry
+                    .payload
+                    .get("model")
+                    .and_then(|v| v.as_str())
+                    .or(current_model.as_deref());
                 let usage = extract_codex_usage(&entry.payload);
                 attach_usage_to_first(&mut steps, idx, model, &usage);
             }
@@ -130,12 +174,71 @@ fn extract_codex_usage(payload: &serde_json::Value) -> Usage {
         }
         None
     };
-    Usage {
-        tokens_in: get_u64(&["input_tokens", "prompt_tokens", "promptTokens"]),
-        tokens_out: get_u64(&["output_tokens", "completion_tokens", "completionTokens"]),
-        cache_read: get_u64(&["cached_tokens", "prompt_cache_read_tokens"]),
-        cache_create: None,
+    // OpenAI's input count includes the cached share.
+    Usage::from_cache_inclusive(
+        get_u64(&["input_tokens", "prompt_tokens", "promptTokens"]),
+        get_u64(&[
+            "cached_input_tokens",
+            "cached_tokens",
+            "prompt_cache_read_tokens",
+        ]),
+        get_u64(&["output_tokens", "completion_tokens", "completionTokens"]),
+    )
+}
+
+/// Cumulative counters from a `token_count` event's `total_token_usage`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct CodexTotals {
+    input: u64,
+    cached: u64,
+    output: u64,
+}
+
+impl CodexTotals {
+    fn minus(&self, prev: &Self) -> Self {
+        CodexTotals {
+            input: self.input.saturating_sub(prev.input),
+            cached: self.cached.saturating_sub(prev.cached),
+            output: self.output.saturating_sub(prev.output),
+        }
     }
+
+    fn plus(&self, other: &Self) -> Self {
+        CodexTotals {
+            input: self.input + other.input,
+            cached: self.cached + other.cached,
+            output: self.output + other.output,
+        }
+    }
+
+    fn is_zero(&self) -> bool {
+        *self == Self::default()
+    }
+
+    fn usage(&self) -> Usage {
+        Usage::from_cache_inclusive(Some(self.input), Some(self.cached), Some(self.output))
+    }
+}
+
+/// `total_token_usage` from an `event_msg` of type `token_count`. `None`
+/// for other events and for token_count events with `info: null` (Codex
+/// emits those for rate-limit-only updates).
+fn token_count_totals(payload: &serde_json::Value) -> Option<CodexTotals> {
+    if payload.get("type").and_then(|t| t.as_str()) != Some("token_count") {
+        return None;
+    }
+    let total = payload.get("info")?.get("total_token_usage")?;
+    let get = |k: &str| {
+        total
+            .get(k)
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0)
+    };
+    Some(CodexTotals {
+        input: get("input_tokens"),
+        cached: get("cached_input_tokens"),
+        output: get("output_tokens"),
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -277,7 +380,8 @@ mod tests {
         let steps = load(f.path()).unwrap();
         assert_eq!(steps.len(), 1);
         assert_eq!(steps[0].model.as_deref(), Some("gpt-5"));
-        assert_eq!(steps[0].tokens_in, Some(120));
+        // input_tokens includes the 40 cached; agx stores uncached input.
+        assert_eq!(steps[0].tokens_in, Some(80));
         assert_eq!(steps[0].tokens_out, Some(60));
         assert_eq!(steps[0].cache_read, Some(40));
     }
@@ -316,5 +420,49 @@ mod tests {
         let steps = load(f.path()).unwrap();
         assert_eq!(steps.len(), 1);
         assert_eq!(steps[0].kind, StepKind::UserText);
+    }
+
+    #[test]
+    fn attaches_token_count_usage_and_turn_context_model() {
+        // Current rollout shape: model on turn_context, cumulative usage on
+        // token_count events. The second token_count repeats the first
+        // (Codex does this) and must not add tokens; `info: null` events
+        // are rate-limit-only.
+        let tc = |input: u64, cached: u64, output: u64| {
+            format!(
+                r#"{{"type":"event_msg","payload":{{"type":"token_count","info":{{"total_token_usage":{{"input_tokens":{input},"cached_input_tokens":{cached},"output_tokens":{output}}}}}}}}}"#
+            )
+        };
+        let jsonl = [
+            r#"{"type":"turn_context","payload":{"model":"gpt-5.4"}}"#.to_string(),
+            r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"q"}]}}"#.to_string(),
+            r#"{"type":"event_msg","payload":{"type":"token_count","info":null}}"#.to_string(),
+            r#"{"type":"response_item","payload":{"type":"function_call","call_id":"c1","name":"shell","arguments":"{}"}}"#.to_string(),
+            tc(1000, 400, 50),
+            tc(1000, 400, 50),
+            r#"{"type":"response_item","payload":{"type":"function_call_output","call_id":"c1","output":"ok"}}"#.to_string(),
+            r#"{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}}"#.to_string(),
+            tc(2500, 1400, 80),
+        ]
+        .join("\n");
+        let f = write_file(&jsonl);
+        let steps = load(f.path()).unwrap();
+        // user, tool_use, tool_result, assistant
+        assert_eq!(steps.len(), 4);
+        let first = &steps[1];
+        assert_eq!(first.model.as_deref(), Some("gpt-5.4"));
+        assert_eq!(
+            (first.tokens_in, first.cache_read, first.tokens_out),
+            (Some(600), Some(400), Some(50))
+        );
+        let second = &steps[3];
+        assert_eq!(second.model.as_deref(), Some("gpt-5.4"));
+        assert_eq!(
+            (second.tokens_in, second.cache_read, second.tokens_out),
+            (Some(500), Some(1000), Some(30))
+        );
+        let totals = crate::timeline::compute_session_totals(&steps);
+        assert_eq!(totals.tokens_in + totals.cache_read, 2500);
+        assert!(totals.cost_usd.is_some());
     }
 }

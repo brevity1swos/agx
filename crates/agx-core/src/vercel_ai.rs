@@ -222,6 +222,7 @@ fn extract_usage(obj: &serde_json::Value) -> Option<Usage> {
         tokens_out: get(&["completionTokens", "outputTokens"]),
         cache_read: get(&["cachedInputTokens", "cacheReadInputTokens"]),
         cache_create: get(&["cacheCreationInputTokens"]),
+        cache_create_1h: None,
     };
     // All-zero is sentinel for "no LLM call on this step". Treat as None
     // so downstream display / corpus sums don't pretend it's a real
