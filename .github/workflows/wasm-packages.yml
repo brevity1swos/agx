@@ -8,8 +8,12 @@
 # released. Like agx-py, the package versions in lockstep with
 # agx-core — stamped from the tag at build time.
 #
-# Secrets: `NPM_TOKEN` (an npm automation token) in the `npm`
-# environment. Publishes with provenance, which needs `id-token: write`.
+# Publishing uses npm Trusted Publishing (OIDC) — no token secret. npm
+# attaches provenance automatically. One-time setup: the package must
+# exist on npm first (the very first version is published by hand), then
+# on npmjs.com add a trusted publisher for `agx-wasm` with owner
+# `brevity1swos`, repository `agx`, workflow `wasm-packages.yml`,
+# environment `npm`. Requires Node >= 22.14 and npm >= 11.5.1.
 #
 # Security review: no untrusted `github.event.*` input is consumed in
 # `run:` commands. `matrix.target` is a static string from this file,
@@ -68,7 +72,7 @@ jobs:
     environment: npm
     permissions:
       contents: read
-      id-token: write # npm provenance
+      id-token: write # npm Trusted Publishing (OIDC)
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -76,10 +80,10 @@ jobs:
           path: pkg
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '20'
+          node-version: '22'
           registry-url: 'https://registry.npmjs.org'
+      # Node 22 bundles npm 10; trusted publishing needs npm >= 11.5.1.
+      - run: npm install -g npm@11.21.0
       - name: Publish to npm
         working-directory: pkg
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public --provenance
+        run: npm publish --access public
