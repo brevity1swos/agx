@@ -318,7 +318,7 @@ Everything below works end-to-end on real sessions across all supported formats,
 - **Experimental replay** (`R`, hidden flags) — re-execute a tool call from the TUI with triple-gate safety (flag + backend flag + per-invocation confirm)
 
 **Quality bar**
-- **369 tests** across the workspace (252 agx-core + 104 integration + 11 CLI + doc-tests), clippy-clean under strict and pedantic lint groups, `cargo audit` clean
+- **428 tests** across the workspace (290 agx-core + 108 integration + 17 agx-mcp + 11 CLI + doc-tests), clippy-clean under strict and pedantic lint groups, `cargo audit` clean
 
 ## Why this exists
 
