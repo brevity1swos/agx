@@ -114,9 +114,37 @@ pub fn scan(format: Format, path: &Path) -> Result<UnknownReport> {
     Ok(report)
 }
 
-const CLAUDE_KNOWN_TOP: &[&str] = &["user", "assistant"];
-const CLAUDE_KNOWN_USER_ITEMS: &[&str] = &["text", "tool_result"];
-const CLAUDE_KNOWN_ASSISTANT_ITEMS: &[&str] = &["text", "tool_use"];
+// "Known" means the parser either renders the type or skips it on
+// purpose. Claude Code writes many metadata entries next to the
+// conversation (session titles, hook output, request digests, file
+// history, mode changes); none of them carry timeline content, and
+// reporting them buried real drift under noise. Verified against
+// Claude Code sessions written 2026-10.
+const CLAUDE_KNOWN_TOP: &[&str] = &[
+    "user",
+    "assistant",
+    // Intentionally skipped metadata:
+    "ai-title",
+    "api-request",
+    "api-request-blob",
+    "api-request-shape",
+    "atis-latch",
+    "attachment",
+    "file-history-delta",
+    "file-history-snapshot",
+    "last-prompt",
+    "mode",
+    "permission-mode",
+    "pr-link",
+    "queue-operation",
+    "summary",
+    "system",
+    "tools-used",
+];
+const CLAUDE_KNOWN_USER_ITEMS: &[&str] = &["text", "tool_result", "image"];
+// Thinking blocks are skipped: current models return them empty by default.
+const CLAUDE_KNOWN_ASSISTANT_ITEMS: &[&str] =
+    &["text", "tool_use", "thinking", "redacted_thinking"];
 
 fn scan_claude_code(content: &str, report: &mut UnknownReport) {
     for (i, line) in content.lines().enumerate() {
@@ -135,6 +163,11 @@ fn scan_claude_code(content: &str, report: &mut UnknownReport) {
         };
         if !CLAUDE_KNOWN_TOP.contains(&ty) {
             record(&mut report.unknown_top_level, ty, line_num);
+            continue;
+        }
+        // Metadata entries (e.g. `api-request-blob`) embed whole request
+        // copies; only conversation entries' items reach the timeline.
+        if ty != "user" && ty != "assistant" {
             continue;
         }
         let known_items = if ty == "user" {
@@ -159,7 +192,15 @@ fn scan_claude_code(content: &str, report: &mut UnknownReport) {
 }
 
 const CODEX_KNOWN_TOP: &[&str] = &["session_meta", "event_msg", "response_item", "turn_context"];
-const CODEX_KNOWN_PAYLOAD: &[&str] = &["message", "function_call", "function_call_output"];
+// `reasoning` items are skipped on purpose (encrypted summaries). Other
+// tool-call payloads (`custom_tool_call`, `local_shell_call`) stay
+// unknown — they are real coverage gaps, not noise.
+const CODEX_KNOWN_PAYLOAD: &[&str] = &[
+    "message",
+    "function_call",
+    "function_call_output",
+    "reasoning",
+];
 
 fn scan_codex(content: &str, report: &mut UnknownReport) {
     for (i, line) in content.lines().enumerate() {
@@ -196,7 +237,8 @@ fn scan_codex(content: &str, report: &mut UnknownReport) {
     }
 }
 
-const GEMINI_KNOWN_MSG_TYPES: &[&str] = &["user", "gemini"];
+// `info` messages are CLI notices (e.g. "request cancelled"), not turns.
+const GEMINI_KNOWN_MSG_TYPES: &[&str] = &["user", "gemini", "info"];
 
 fn scan_gemini(content: &str, report: &mut UnknownReport) -> Result<()> {
     let v: serde_json::Value = serde_json::from_str(content)
@@ -366,40 +408,53 @@ mod tests {
     }
 
     #[test]
+    fn claude_metadata_entries_are_not_scanned_for_items() {
+        let jsonl = r#"{"type":"api-request-blob","message":{"role":"user","content":[{"type":"tool_addition","tool":{}}]}}
+"#;
+        let mut report = UnknownReport::default();
+        scan_claude_code(jsonl, &mut report);
+        assert!(report.unknown_top_level.is_empty());
+        assert!(report.unknown_content_item_types.is_empty());
+    }
+
+    #[test]
     fn claude_unknown_top_level_type_recorded() {
         let jsonl = r#"{"type":"user","uuid":"u1","message":{"role":"user","content":"hi"}}
-{"type":"summary","summary":"…"}
-{"type":"summary","summary":"another"}
+{"type":"future-entry","future-entry":"…"}
+{"type":"future-entry","future-entry":"another"}
 "#;
         let f = write_file(jsonl);
         let report = scan(Format::ClaudeCode, f.path()).unwrap();
         assert_eq!(
-            report.unknown_top_level.get("summary").unwrap(),
+            report.unknown_top_level.get("future-entry").unwrap(),
             &vec![2, 3]
         );
     }
 
     #[test]
     fn claude_unknown_content_item_recorded() {
-        let jsonl = r#"{"type":"assistant","uuid":"a1","message":{"role":"assistant","content":[{"type":"thinking","content":"…"}]}}
+        let jsonl = r#"{"type":"assistant","uuid":"a1","message":{"role":"assistant","content":[{"type":"future_block","content":"…"}]}}
 "#;
         let f = write_file(jsonl);
         let report = scan(Format::ClaudeCode, f.path()).unwrap();
         assert_eq!(
-            report.unknown_content_item_types.get("thinking").unwrap(),
+            report
+                .unknown_content_item_types
+                .get("future_block")
+                .unwrap(),
             &vec![1]
         );
     }
 
     #[test]
     fn codex_unknown_payload_type_recorded() {
-        let jsonl = r#"{"type":"response_item","payload":{"type":"reasoning"}}
+        let jsonl = r#"{"type":"response_item","payload":{"type":"future_payload"}}
 {"type":"response_item","payload":{"type":"message","role":"user","content":[]}}
 "#;
         let f = write_file(jsonl);
         let report = scan(Format::Codex, f.path()).unwrap();
         assert_eq!(
-            report.unknown_payload_types.get("reasoning").unwrap(),
+            report.unknown_payload_types.get("future_payload").unwrap(),
             &vec![1]
         );
     }
@@ -419,12 +474,12 @@ mod tests {
     fn gemini_unknown_message_type_recorded() {
         let json = r#"{"sessionId":"s1","messages":[
             {"type":"user","content":"hi"},
-            {"type":"info","content":"…"},
+            {"type":"future","content":"…"},
             {"type":"system","content":"…"}
         ]}"#;
         let f = write_file(json);
         let report = scan(Format::Gemini, f.path()).unwrap();
-        assert_eq!(report.unknown_top_level.get("info").unwrap(), &vec![2]);
+        assert_eq!(report.unknown_top_level.get("future").unwrap(), &vec![2]);
         assert_eq!(report.unknown_top_level.get("system").unwrap(), &vec![3]);
     }
 
