@@ -53,7 +53,7 @@ path = "src/lib.rs"
 default = []
 # Binary OTLP (.pb / .otlp) support. Off by default because `prost`
 # adds ~500KB of transitive deps. Enable with:
-#   cargo install agx --features otel-proto
+#   cargo install agx-tui --features otel-proto
 #   cargo build --release --features otel-proto
 otel-proto = ["agx-core/otel-proto"]
 # Semantic search (opt-in). fastembed + ONNX runtime, ~90MB model

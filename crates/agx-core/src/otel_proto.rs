@@ -26,7 +26,7 @@ use {crate::timeline::Step, anyhow::Result, std::path::Path};
 pub fn load(_path: &Path) -> Result<Vec<Step>> {
     anyhow::bail!(
         "binary OTLP (.pb / .otlp) support requires rebuilding agx with --features otel-proto.\n\
-         \tInstall: cargo install agx --features otel-proto\n\
+         \tInstall: cargo install agx-tui --features otel-proto\n\
          \tBuild:   cargo build --release --features otel-proto"
     )
 }

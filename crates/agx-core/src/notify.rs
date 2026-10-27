@@ -42,7 +42,7 @@ use anyhow::Result;
 /// used on a feature-off build. Tells users exactly how to rebuild.
 /// Public because the bin crate's main.rs prints it from its CLI
 /// dispatch layer.
-pub const FEATURE_DISABLED_MESSAGE: &str = "--notify-on-* requires rebuilding agx with `cargo install agx --features notifications` or `cargo build --release --features notifications`";
+pub const FEATURE_DISABLED_MESSAGE: &str = "--notify-on-* requires rebuilding agx with `cargo install agx-tui --features notifications` or `cargo build --release --features notifications`";
 
 /// Fire an error notification. Best-effort — failures return `Err` but
 /// the live loop should `.ok()` them so transient OS-notification
