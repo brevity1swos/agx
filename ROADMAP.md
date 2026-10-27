@@ -1293,8 +1293,9 @@ users who never run the TUI.
       Both support `workflow_dispatch` for spot-checks without
       tagging. Security-reviewed — no untrusted `github.event.*`
       consumption in `run:`; `secrets.*` threads via `env:` only.
-      Setup required: PyPI trusted publisher (pypi env), `NPM_TOKEN`
-      (npm env).
+      Setup required: trusted publishers on PyPI (pypi env) and npm
+      (npm env) — no token secrets. npm needs the first version
+      published by hand before a trusted publisher can be added.
 
 **Acceptance:** `pip install agx-py && python -c "import agx; print(len(agx.load('session.jsonl')))"`
 works on Linux, macOS, and Windows. `npm install agx-wasm` exposes the
