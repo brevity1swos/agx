@@ -6,6 +6,163 @@ Stability commitments — which fields, flags, and APIs will or won't change acr
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-27
+
+### Bug Fixes
+
+- *(corpus)* Attribute per-model usage per step, not per session
+Multi-model sessions credited their full token and cost totals to every model, so per_model sums exceeded the corpus totals. ParsedSession now carries a per-model split computed from the steps that carry each model.
+- *(corpus)* Stop descending into symlinked directories
+path.is_dir() follows symlinks, so a link loop fanned out up to max_depth. DirEntry::file_type does not follow links; symlinked files are still collected.
+- *(annotations)* Use a per-process temp file for atomic saves
+Two agx instances saving the same session shared one .tmp file and could publish interleaved JSON, which load_for then treats as empty.
+- *(cli)* Reject flag combinations that were silently ignored
+--diff overrode --export/--summary, --scan-pii overrode --export, --live did nothing outside the tui, and --export overrode --summary. These now fail at parse time. Drops the --scan-pii doc claim of JSON output, which was never implemented.
+- *(slice)* Keep annotations and live reload aligned with sliced views
+Annotations are keyed by original step index, but slicing renumbered steps first, so sliced exports and the tui showed notes on the wrong steps and saved new ones under the wrong index. slice_steps_indexed returns the original indices; exports and the tui re-key notes through it, and the tui makes notes read-only while sliced. Replay logs use the original index too.
+
+  --live reloads now re-apply the slice instead of swapping in the full session, and --diff slices both sessions.
+- *(slice)* Reject bare-integer durations that overflow u64
+The bare-integer branch multiplied unchecked: a panic in debug and a silently wrong filter in release.
+- *(export)* Redact every serialized field and fence md details safely
+--redact only masked label and detail, so tool_name, model, tool_call_id and annotation text leaked into json and trajectory exports. Markdown now picks a fence longer than any backtick run in the detail so tool output can't close it early.
+- *(replay)* Detach child stdin from the tui terminal
+- *(replay)* Stop waiting on pipes held by background grandchildren
+After the shell exits, give the readers a short grace, then kill the
+  process group and collect output with a bounded wait so a command
+  like `sleep 30 &` no longer freezes the tui.
+- *(tui)* Keep selection valid when live reload grows from or to empty
+- *(tui)* Restore terminal when entering the alt screen fails
+- *(mcp)* Recover from poisoned step cache mutex instead of panicking
+A panic while holding the cache lock poisoned it, after which every
+  tool call crashed the server via expect(). Recover the inner value at
+  both lock sites.
+- *(mcp)* Reply to null-id requests and reject malformed ones
+serde collapsed an explicit "id": null into None, so such requests
+  were treated as notifications and never answered. Inspect the raw
+  object instead: only an absent id is a notification. Valid JSON that
+  is not a well-formed request (non-object, missing method, wrong
+  jsonrpc version, bad id type) now gets -32600 instead of -32700.
+- *(mcp)* Answer ping with an empty result
+MCP requires servers to respond to ping with {}; we returned -32601,
+  which hosts can read as a dead server.
+- *(mcp)* Follow mcp error shape for tool calls
+Unknown tool names and invalid arguments are now -32602 and are
+  checked before the session file is loaded. Failures while running a
+  valid call are returned as a successful result with isError: true
+  and the message as text content, instead of a -32603 RPC error the
+  model never sees.
+- *(session)* Dedupe usage across content-block entries sharing message id
+Claude Code writes one JSONL line per content block and each line
+  repeats the full message.usage, so per-entry attachment multiplied
+  token and cost totals. Attach usage + model only on the first entry
+  per message.id; entries without an id keep per-entry behavior.
+- *(timeline)* Skip zero-count failed and null error fields in heuristic
+" failed" matched test summaries like "5 passed; 0 failed", and the
+  "error" key indicator fired on {"error": null} / false / "". Check the
+  preceding count and the key's value before flagging a tool result.
+- *(timeline)* Validate timestamp fields and apply utc offsets
+Malformed dates (month 0/13, day 0, Feb 30, negative year) underflowed
+  the u64 days_from_civil math and produced garbage timestamps. Validate
+  each field, compute in i64, and return None for pre-epoch instants.
+  Numeric offsets like +09:00 are now applied instead of ignored.
+- *(langchain)* Pair tool runs with pending tool_use steps
+Tool runs only checked steps.last() for a same-name tool_use, so
+  parallel calls duplicated tool_use steps, and the tool_result used the
+  run id instead of the LLM tool_calls[].id. Track unclosed chat_model
+  tool_uses, match by recorded tool_call_id or FIFO by name, and reuse
+  the matched use's id on the result.
+- *(langchain)* Accept null for string and list run fields
+LangSmith exports write explicit null for empty child_runs / names,
+  which #[serde(default)] alone rejects. Add a shared null_as_default
+  deserialize helper and apply it to Run's String / Vec fields.
+- *(generic)* Accept null tool_calls and object-valued arguments
+OpenAI SDK dumps write "tool_calls": null on plain replies, and some
+  OpenAI-compatible exporters store function.arguments as a parsed object
+  instead of a JSON string. Both previously failed the whole parse.
+- *(otel)* Accept numeric or null startTimeUnixNano
+OTLP-JSON specifies nano timestamps as strings, but several exporters
+  emit plain JSON numbers, which failed the whole parse. Accept string,
+  number, or null, and tolerate null span / attribute lists.
+- *(vercel-ai)* Read v5 input and output tool fields
+AI SDK v5 renamed toolCalls[].args to input and toolResults[].result
+  to output, so v5 traces rendered empty tool inputs and results. Fall
+  back to the v5 names when the v4 ones are absent.
+- *(otel)* Skip prompt history replayed in later chat spans
+Instrumentation that records the full conversation in gen_ai.prompt.N
+  re-emitted every earlier turn on each chat span. Skip the leading
+  prompts that match the text turns already on the timeline, deriving the
+  history from emitted steps so the binary OTLP path benefits too.
+- *(format)* Sniff utf-8 on a prefix before routing to otel proto
+A single invalid byte anywhere in a text session sent the whole file to
+  the protobuf parser. Decide text vs binary on the first 8 KiB, tolerating
+  a multibyte char cut by the window, then detect on a lossy view.
+- *(session)* Decode jsonl lines lossily instead of failing on bad utf-8
+- *(ci)* Release python and wasm bindings on agx-core tags
+Both workflows triggered on v* tags, but release-plz pushes per-crate tags (agx-core-v0.2.1), so neither ever ran and nothing reached PyPI or npm.
+
+  - trigger on agx-core-v* and stamp the bindings version from that tag, so agx-py and agx-wasm version in lockstep with agx-core
+  - publish to PyPI as agx-py (the bare agx name belongs to an unrelated project); the import name stays agx
+  - switch PyPI publishing to trusted publishing and npm to --provenance
+  - install wasm-pack with taiki-e/install-action instead of curl | sh
+  - collapse the four wheel jobs into one matrix and pin every action
+  - bump agx-py and agx-wasm to 0.2.1 to match agx-core
+- *(cost)* Correct pricing and token counts for current sessions
+Cost estimates were missing or wrong for nearly every real session:
+
+  - pricing rows were unverified estimates; Opus 4.6/4.8 were priced at $15/$75 instead of $5/$25, and no current model (claude-opus-5-5, claude-sonnet-5-5, gpt-5.4, gemini-3-flash-preview, ...) was listed. Rows are now verified against the providers' pricing pages (2026-10-27), Gemini names use dots as sessions record them, and long-prompt tiers (Haiku 5.5, Gemini 2.5 Pro, GPT-5.4+) are priced via LongContextTier
+  - Claude Code writes 1-hour-TTL cache entries, which bill at 2x input, not the 5-minute 1.25x. Step gains an optional cache_create_1h (the 1-hour share of cache_create) and pricing a 1-hour write rate. Reproduces Claude Code's own recorded cost for a real session to the cent
+  - OpenAI and Gemini report prompt counts that include cached tokens, so cached input was billed twice. Usage::from_cache_inclusive stores uncached input, matching the Anthropic convention tokens_in already documented
+  - real Codex rollouts carry the model on turn_context and usage on token_count events, neither of which was read, so every Codex session had no tokens or model. Usage is now taken from total_token_usage deltas (token_count repeats)
+  - real Gemini CLI sessions write a tokens object instead of usageMetadata, so they had no tokens either; thoughts bill as output
+- Point feature rebuild hints at the agx-tui crate
+The hints said cargo install agx --features ..., but the crates.io crate named agx is an unrelated project; agx is published as agx-tui.
+- *(debug-unknowns)* Stop reporting known metadata entries
+Current Claude Code sessions write many metadata entries (ai-title, attachment, api-request, file-history-*, ...) that agx skips on purpose; reporting them buried real drift. Content items are now scanned only on user/assistant entries, since metadata entries embed whole request copies. Codex reasoning items and Gemini info messages are known too. Codex custom_tool_call / local_shell_call stay reported as real coverage gaps.
+
+### Documentation
+
+- Sync claude.md architecture tree with the workspace layout
+Parsers and core modules moved to crates/agx-core/src; the tree still listed them under src/ and omitted agx-mcp, agx-py, agx-wasm and replay.rs. Also documents prefix-based UTF-8 sniffing in format detection.
+- Refresh jump-to contract, token convention and test count
+--jump-to shipped as <step> <session>, not the planned <session>:<step>. Documents the uncached-input token convention and the pricing-row fields.
+
+### Miscellaneous
+
+- Add launch/ promotion folder
+Promotion plan + per-channel drafts (Show HN, Lobste.rs, Terminal Trove, MCP
+  registries, Twitter/X) mirroring the rxray launch template, tailored to agx:
+  zero-instrumentation multi-CLI parsing + the agx-mcp self-introspection angle.
+  awesome-ratatui already merged; awesome-rust deferred until the >50star/>2000dl bar.
+- Add launch preview.png and mark pre-launch items done
+1400x800 still cropped from the demo (3-pane timeline + token/cost detail) for
+  the Terminal Trove image field. Repo homepage set to docs.rs/agx-core. Launch
+  docs updated to reflect both done.
+
+### Style
+
+- *(pii)* Collapse nested jwt match into a let chain
+Raising rust-version to 1.88 lets clippy's collapsible_if suggest let chains, which made -D warnings fail.
+
+### Build
+
+- *(deps)* Bump deps with open rustsec advisories
+Updates crossbeam-epoch, h2, rustls, rustls-webpki, webpki-roots, webpki-root-certs and notify-rust (drops quick-xml 0.37) within semver, and pyo3 0.26 -> 0.29 for agx-py. cargo audit now reports no vulnerabilities.
+- Raise msrv to 1.88
+The declared 1.85 was already false: ratatui 0.30 needs 1.86, and darling, time and ort (embedding-search) need 1.88. Users on older toolchains got dependency build errors instead of a clear rust-version message. The workspace checks clean on 1.88 with every feature.
+
+### Ci
+
+- Add msrv, wasm32 and embedding-search jobs
+msrv checks the workspace on 1.88 with every feature. wasm checks agx-wasm for wasm32-unknown-unknown, since --workspace only builds it for the host. embedding-search was never compiled in ci; it runs clippy only, because the semantic tests would download a ~90MB model each run.
+
+  Also pins every action to a commit sha, sets a read-only token, drops checkout credentials, and cancels superseded pr runs.
+- Run cargo audit on lockfile changes and weekly
+Advisories accumulated unnoticed because nothing ran cargo audit. The weekly schedule catches advisories published against an unchanged lockfile.
+- *(release)* Serialize release-plz runs and pin actions
+Back-to-back pushes to main could run release-plz concurrently and race on the release pr or tags.
+
+
 ## [0.2.1] - 2026-06-19
 
 ### Bug Fixes
