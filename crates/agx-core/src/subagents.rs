@@ -22,6 +22,7 @@
 //! Every field is optional here so drift degrades to missing links rather
 //! than a failed load.
 
+use crate::claims::{self, ClaimCheck};
 use crate::session;
 use crate::timeline::{self, Step};
 use anyhow::{Context, Result};
@@ -72,6 +73,9 @@ pub struct Subagent {
     /// Hand-back reports delivered to the spawner, in file order. More than
     /// one when the subagent was continued after its first report.
     pub reports: Vec<String>,
+    /// The final report's "tests pass" claim checked against this
+    /// subagent's own test runs. `None` when the report makes no such claim.
+    pub claim_check: Option<ClaimCheck>,
     pub step_count: usize,
     /// Set when the transcript failed to parse; `steps` is then empty.
     pub load_error: Option<String>,
@@ -136,6 +140,10 @@ pub fn load_tree(session_path: &Path) -> Result<SessionTree> {
         sub.spawned_by = spawner;
         sub.spawn_step = step;
         sub.reports = reports.remove(&sub.agent_id).unwrap_or_default();
+        sub.claim_check = sub
+            .reports
+            .last()
+            .and_then(|report| claims::check(report, &sub.steps));
     }
     subagents.sort_by(|a, b| {
         let key = |s: &Subagent| (s.spawned_by == Spawner::Unknown, s.spawn_step);
@@ -181,6 +189,7 @@ fn discover(dir: &Path) -> Result<Vec<Subagent>> {
             spawned_by: Spawner::Unknown,
             spawn_step: None,
             reports: Vec::new(),
+            claim_check: None,
             step_count: steps.len(),
             load_error,
             steps,

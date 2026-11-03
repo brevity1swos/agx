@@ -40,6 +40,7 @@
 
 pub mod annotations;
 pub mod browser;
+pub mod claims;
 pub mod codex;
 pub mod corpus;
 pub mod debug_unknowns;

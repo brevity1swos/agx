@@ -468,6 +468,50 @@ fn print_subagent(sub: &agx::subagents::Subagent, depth: usize) {
             }
         }
     }
+    if let Some(check) = &sub.claim_check {
+        print_claim_check(check, &pad);
+    }
+}
+
+/// Problem verdicts print in capitals so they stand out in a long tree.
+fn print_claim_check(check: &agx::claims::ClaimCheck, pad: &str) {
+    use agx::claims::Verdict;
+    let run = check.last_run.as_ref().map(|r| {
+        format!(
+            "last test run (step {}): {} passed, {} failed",
+            r.step, r.passed, r.failed
+        )
+    });
+    let line = match check.verdict {
+        Verdict::Supported => format!("supported, {}", run.unwrap_or_default()),
+        Verdict::Contradicted => format!("CONTRADICTED, {}", run.unwrap_or_default()),
+        Verdict::Stale => format!(
+            "STALE, {} file edit(s) after {}",
+            check.edits_after_run,
+            run.unwrap_or_default()
+        ),
+        Verdict::Unverified => "UNVERIFIED, no test run found in the transcript".to_string(),
+    };
+    println!("{pad}  check: {line}");
+    if let (Some(claimed), Some(run)) = (check.claimed_count, &check.last_run)
+        && claimed != run.passed
+    {
+        println!(
+            "{pad}         report says {claimed} tests; last run passed {}",
+            run.passed
+        );
+    }
+    if check.later_unparsed_runs > 0 {
+        let when = if check.last_run.is_some() {
+            "later "
+        } else {
+            ""
+        };
+        println!(
+            "{pad}         {} {when}test command(s) had no recognizable summary",
+            check.later_unparsed_runs
+        );
+    }
 }
 
 fn print_pii_scan(steps: &[Step]) {
