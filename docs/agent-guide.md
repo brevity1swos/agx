@@ -40,8 +40,7 @@ conversation. Fall back to shell `agx` commands for everything else
 
 ## Command cookbook
 
-Every command here ships in agx v0.1.x unless marked
-🚧 *planned*.
+Every command here ships in agx 0.3.x.
 
 ### "How expensive was that session?" / "Show me the summary"
 
@@ -205,7 +204,7 @@ siblings are informational. JSON shape:
 
 ```json
 {
-  "agx":     {"state": "ok", "version": "0.1.0", "features": []},
+  "agx":     {"state": "ok", "version": "0.3.0", "features": []},
   "agx_mcp": {"state": "missing"},
   "sift":    {"state": "ok", "version": "sift 0.1.0"},
   "rgx":     {"state": "ok", "version": "rgx 0.12.0"}
@@ -240,7 +239,8 @@ When both agx and sift are installed:
 When agx-mcp is installed (see [mcp-integration.md](mcp-integration.md)):
 
 - Prefer MCP tools (`agx_session_summary`, `agx_recent_errors`,
-  `agx_tool_distribution`, `agx_scan_pii`, `agx_search`) over
+  `agx_tool_distribution`, `agx_scan_pii`, `agx_search`,
+  `agx_list_annotations`) over
   shell commands for *the current session*. They're structured,
   typed, and scoped.
 - Shell commands stay the right choice for *other sessions*,
@@ -249,17 +249,20 @@ When agx-mcp is installed (see [mcp-integration.md](mcp-integration.md)):
 ## How to know agx is set up for a project
 
 ```bash
-agx --version      # agx X.Y.Z (default) — bin installed
-which agx-mcp      # only present if --features mcp crate is installed
+agx --version      # prints "agx X.Y.Z" when the binary is installed
+agx doctor --json  # compiled-in features + which siblings are on PATH
+which agx-mcp      # present once installed with `cargo install agx-mcp`
 ```
 
 If agx isn't installed and the user mentions agent-trace work,
-suggest the one-liner `cargo install --path .` (from the repo) or
-point them at the README.
+suggest `cargo install agx-tui` (the crate is `agx-tui`; the binary
+is `agx`) and ask before running it. `cargo install agx-mcp` adds the
+MCP server.
 
 ## Stable contracts you can rely on
 
-- `agx --version` — machine-parseable format `agx X.Y.Z (<features>)`.
+- `agx --version` — prints `agx X.Y.Z`. Compiled-in features are not
+  part of it; read them from `agx doctor --json`.
 - `agx --export json` schema — documented in
   [docs/eval-integration.md](eval-integration.md), versioned per
   [docs/stability.md](stability.md). Field additions are MINOR;
@@ -267,14 +270,16 @@ point them at the README.
 - `agx --jump-to <N> <session>` — public contract per
   [docs/suite-conventions.md](suite-conventions.md) §5.
 - `agx corpus --jsonl` — per-session line format,
-  `{path, format, step_count, totals, tool_stats, annotation_count,
-   fork_root_count, error_count, mtime_secs}`.
+  `{path, format, step_count, tokens_in, tokens_out, cache_read,
+   cache_create, cost_usd, models, tool_counts, error_count,
+   annotation_count, fork_root_count, mtime_secs}`.
 - agx-mcp tool names + input/output schemas — same stability
   contract as the CLI.
 
 ## What not to assume
 
-- **The user's agx version.** Some commands here need v0.1.x.
+- **The user's agx version.** This guide tracks agx 0.3.x; older
+  installs may lack some commands.
   If a flag you remember isn't found, check `agx --help`, not
   your memory.
 - **That `agx corpus --tui` can be piped.** It owns the terminal;
