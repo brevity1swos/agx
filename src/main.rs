@@ -872,7 +872,7 @@ fn main() -> Result<()> {
             );
         }
         if !totals.unique_models.is_empty() {
-            println!("  models: {}", totals.unique_models.join(", "));
+            println!("  models: {}", printable(&totals.unique_models.join(", ")));
         }
         if !cli.no_cost {
             match totals.cost_usd {
@@ -885,7 +885,7 @@ fn main() -> Result<()> {
         }
         println!("First 20:");
         for (i, step) in steps.iter().take(20).enumerate() {
-            println!("  {:>3}  {}", i + 1, step.label);
+            println!("  {:>3}  {}", i + 1, printable(&step.label));
         }
         return Ok(());
     }
