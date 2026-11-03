@@ -9,6 +9,11 @@ did"*, *"what that session cost"*, *"what went wrong yesterday"*,
 right. Users rarely type agx commands directly — they ask you in
 natural language and expect you to run the right thing.
 
+A condensed version packaged as an agent skill lives at
+[skills/agx/SKILL.md](../skills/agx/SKILL.md). Copy the `skills/agx`
+directory into your agent's skills directory (for Claude Code,
+`~/.claude/skills/`) to load it automatically.
+
 If `agx-mcp` is installed (see [mcp-integration.md](mcp-integration.md)),
 prefer the MCP tools for questions about the current session —
 they're typed, structured, and stay scoped to the in-flight
