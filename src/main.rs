@@ -435,6 +435,23 @@ fn print_subagent_children(
     }
 }
 
+/// Session files are model output and quote raw tool output, so a field can
+/// carry ESC sequences that would drive the user's terminal, or bidi
+/// overrides that reorder what is shown. Replace both with U+FFFD before
+/// printing. Newlines go too; callers print one field per line.
+fn printable(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            let bidi = matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}');
+            if c.is_control() || bidi {
+                '\u{FFFD}'
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
 fn print_subagent(sub: &agx::subagents::Subagent, depth: usize) {
     use agx::timeline::truncate;
     let pad = "  ".repeat(depth);
@@ -443,9 +460,9 @@ fn print_subagent(sub: &agx::subagents::Subagent, depth: usize) {
         .map_or_else(|| "step ?".to_string(), |i| format!("step {i}"));
     println!(
         "\n{pad}{at}  agent {}  {}  {}",
-        sub.agent_id,
-        sub.agent_type.as_deref().unwrap_or("(unknown type)"),
-        sub.description.as_deref().unwrap_or(""),
+        printable(&sub.agent_id),
+        printable(sub.agent_type.as_deref().unwrap_or("(unknown type)")),
+        printable(sub.description.as_deref().unwrap_or("")),
     );
     let mut facts = vec![format!("{} steps", sub.step_count)];
     match sub.finished {
@@ -454,17 +471,17 @@ fn print_subagent(sub: &agx::subagents::Subagent, depth: usize) {
         None => {}
     }
     if let Some(branch) = &sub.worktree_branch {
-        facts.push(format!("branch {branch}"));
+        facts.push(format!("branch {}", printable(branch)));
     }
     println!("{pad}  {}", facts.join(" · "));
     if let Some(err) = &sub.load_error {
-        println!("{pad}  load error: {}", truncate(err, 100));
+        println!("{pad}  load error: {}", printable(&truncate(err, 100)));
     }
     match sub.reports.as_slice() {
         [] => println!("{pad}  report: (none handed back)"),
         reports => {
             for r in reports {
-                println!("{pad}  report: {}", truncate(r, 100));
+                println!("{pad}  report: {}", printable(&truncate(r, 100)));
             }
         }
     }
