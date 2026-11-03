@@ -54,6 +54,7 @@ crates/
 │   ├── corpus.rs           # `agx corpus <dir>` subcommand: parallel rayon parse, aggregate, filter, text/json output
 │   ├── diff_align.rs       # Phase 4.1 pure alignment: LCS over (kind, tool_name) → Vec<AlignRow> for session-to-session diff
 │   ├── slice.rs            # Phase 4.2 pure slicing: duration / range parsers + slice_steps applied in main before dispatch
+│   ├── subagents.rs        # Claude Code subagent tree for `agx subagents`: <session>/subagents/ transcripts + meta.json, linked by toolUseId, hand-back reports
 │   ├── annotations.rs      # Phase 4.3 per-step annotations; sidecar JSON under ~/.agx/notes/, atomic rename, fault-tolerant load
 │   ├── semantic.rs         # Phase 4.4 semantic search (`//query`); feature-gated `embedding-search`, stub when off
 │   ├── notify.rs           # Phase 5.3 desktop notifications for `--live` mode; feature-gated `notifications`, no-op when off

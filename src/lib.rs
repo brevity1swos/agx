@@ -22,7 +22,7 @@
 pub use agx_core::{
     annotations, browser, codex, corpus, debug_unknowns, diff_align, export, format, gemini,
     generic, langchain, loader, notify, otel_json, otel_proto, pii, pricing, semantic, session,
-    slice, timeline, vercel_ai,
+    slice, subagents, timeline, vercel_ai,
 };
 
 pub mod corpus_tui;

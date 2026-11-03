@@ -58,5 +58,6 @@ pub mod pricing;
 pub mod semantic;
 pub mod session;
 pub mod slice;
+pub mod subagents;
 pub mod timeline;
 pub mod vercel_ai;
