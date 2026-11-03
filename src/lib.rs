@@ -20,9 +20,9 @@
 //! belong in `agx-core`.
 
 pub use agx_core::{
-    annotations, browser, codex, corpus, debug_unknowns, diff_align, export, format, gemini,
-    generic, langchain, loader, notify, otel_json, otel_proto, pii, pricing, semantic, session,
-    slice, subagents, timeline, vercel_ai,
+    annotations, browser, claims, codex, corpus, debug_unknowns, diff_align, export, format,
+    gemini, generic, langchain, loader, notify, otel_json, otel_proto, pii, pricing, semantic,
+    session, slice, subagents, timeline, vercel_ai,
 };
 
 pub mod corpus_tui;
