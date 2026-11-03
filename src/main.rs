@@ -180,6 +180,21 @@ enum Commands {
     /// which stepwise siblings (sift, rgx, agx-mcp) are installed.
     /// Matches `sift doctor` per docs/suite-conventions.md §2.
     Doctor(DoctorArgs),
+    /// Show the subagents a Claude Code session delegated to, as a tree:
+    /// which step spawned each one, its type and task, step count, and
+    /// the report it handed back. Reads `<session>/subagents/` beside
+    /// the session file.
+    Subagents(SubagentsArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct SubagentsArgs {
+    /// Path to the parent Claude Code session (`<session-id>.jsonl`).
+    session: PathBuf,
+
+    /// Emit `{session, steps, subagents: [...]}` as JSON instead of a tree.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(clap::Args, Debug)]
@@ -370,6 +385,91 @@ fn print_sibling(label: &str, version: Option<&str>) {
     }
 }
 
+fn run_subagents(args: &SubagentsArgs) -> Result<()> {
+    use agx::subagents::{self, Spawner};
+    let tree = subagents::load_tree(&args.session)?;
+
+    if args.json {
+        let payload = serde_json::json!({
+            "session": tree.session,
+            "steps": tree.steps.len(),
+            "subagents": tree.subagents,
+        });
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+        return Ok(());
+    }
+
+    println!("{}", tree.session.display());
+    println!(
+        "  {} steps, {} subagents",
+        tree.steps.len(),
+        tree.subagents.len()
+    );
+    print_subagent_children(&tree.subagents, &Spawner::Session, 1);
+    let unlinked: Vec<_> = tree
+        .subagents
+        .iter()
+        .filter(|s| s.spawned_by == Spawner::Unknown)
+        .collect();
+    if !unlinked.is_empty() {
+        println!("\n  unlinked (no matching spawn call):");
+        for sub in unlinked {
+            print_subagent(sub, 2);
+        }
+    }
+    Ok(())
+}
+
+/// `subs` is sorted by spawn step, so children print in delegation order.
+fn print_subagent_children(
+    subs: &[agx::subagents::Subagent],
+    parent: &agx::subagents::Spawner,
+    depth: usize,
+) {
+    for sub in subs.iter().filter(|s| &s.spawned_by == parent) {
+        print_subagent(sub, depth);
+        let me = agx::subagents::Spawner::Subagent {
+            agent_id: sub.agent_id.clone(),
+        };
+        print_subagent_children(subs, &me, depth + 1);
+    }
+}
+
+fn print_subagent(sub: &agx::subagents::Subagent, depth: usize) {
+    use agx::timeline::truncate;
+    let pad = "  ".repeat(depth);
+    let at = sub
+        .spawn_step
+        .map_or_else(|| "step ?".to_string(), |i| format!("step {i}"));
+    println!(
+        "\n{pad}{at}  agent {}  {}  {}",
+        sub.agent_id,
+        sub.agent_type.as_deref().unwrap_or("(unknown type)"),
+        sub.description.as_deref().unwrap_or(""),
+    );
+    let mut facts = vec![format!("{} steps", sub.step_count)];
+    match sub.finished {
+        Some(true) => facts.push("finished".into()),
+        Some(false) => facts.push("unfinished".into()),
+        None => {}
+    }
+    if let Some(branch) = &sub.worktree_branch {
+        facts.push(format!("branch {branch}"));
+    }
+    println!("{pad}  {}", facts.join(" · "));
+    if let Some(err) = &sub.load_error {
+        println!("{pad}  load error: {}", truncate(err, 100));
+    }
+    match sub.reports.as_slice() {
+        [] => println!("{pad}  report: (none handed back)"),
+        reports => {
+            for r in reports {
+                println!("{pad}  report: {}", truncate(r, 100));
+            }
+        }
+    }
+}
+
 fn print_pii_scan(steps: &[Step]) {
     use std::collections::BTreeMap;
     let matches = pii::scan_steps(steps);
@@ -519,6 +619,10 @@ fn main() -> Result<()> {
     // session scaffolding errors.
     if let Some(Commands::Doctor(args)) = &cli.command {
         return run_doctor(args);
+    }
+
+    if let Some(Commands::Subagents(args)) = &cli.command {
+        return run_subagents(args);
     }
 
     // `agx corpus <dir>` subcommand takes over before the single-session
