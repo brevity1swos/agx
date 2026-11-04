@@ -12,9 +12,9 @@ back the agx terminal debugger — no TUI deps compiled in.
 
 ## Install
 
-```sh
-pip install agx-py
-```
+`agx-py` is not yet published to PyPI. Until it is, build it from
+source (see [Build from source](#build-from-source)). Once published,
+it will install with `pip install agx-py`.
 
 The distribution is `agx-py`; the import name is `agx`.
 
