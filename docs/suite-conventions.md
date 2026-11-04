@@ -162,7 +162,9 @@ release note; silent breaks are bugs.
   session file path or a session ID; step is a 0-indexed integer.
   Must launch the TUI on the specified step.
 - **`agx --version`** — stable machine-parseable format
-  (`agx X.Y.Z (<features>)`). Used by sift's `doctor` subcommand.
+  (`agx X.Y.Z`). Used by sift's `doctor` subcommand, which reads the
+  first `X.Y.Z` token. Compiled-in features are reported by
+  `agx doctor --json`, not by `--version`.
 
 ### rgx → public for sift and agx
 
@@ -173,12 +175,38 @@ release note; silent breaks are bugs.
   Exit: 0 match, 1 no match, 2 error.
 - **`rgx --version`** — stable machine-parseable format.
 
-### sift → public for nobody
+### sift → public for agx (shipped, Phase 1.7)
 
-sift is the leaf consumer in the suite. No other tool in the suite reads
-sift's output programmatically. If that changes (e.g., agx surfaces sift
-ledger status in the timeline detail pane — deliberately deferred), add
-the contract to this section before shipping the integration.
+The Phase 1.7 reframe (sift = snapshot oracle, agx = navigator) elevates
+sift from "leaf consumer" to a publishing producer that agx (and any
+other consumer — eval harnesses, third-party tools) can address. The
+contract is sift-side only; agx ships its overlay rendering on its own
+cadence. One-way coupling per §6 rule 5 is preserved: this is a second
+producer→consumer edge, not a bidirectional dependency.
+
+- **`sift export --session <id> --format json`** — emit the full ledger
+  as a stable JSON schema:
+  `{sift_export_version: 1, session_id, started_at, ended_at,
+  transcript_path, turns: [{turn, entries: [LedgerEntry]}]}`. Schema
+  versioned via the integer `sift_export_version`; consumers refuse
+  unknown major versions. Schema documented in
+  `docs/export-schema.md` (sift repo). Stability commitment dates
+  from Phase 1.7 ship.
+- **`sift state --session <id> --at-turn <N> --format json`** — return
+  the file world at turn N as a `path → SHA-1-hex` map. Agx and other
+  consumers compose this twice (turns A and B) to diff the file world
+  between any two arbitrary turns — a primitive nothing else in the
+  AI-dev workflow exposes (git is commit-grain; the agent transcript
+  records intent, not state).
+- **`sift --version`** — stable machine-parseable format
+  (`sift X.Y.Z`). Used by agx (and rgx) `doctor` subcommands once
+  those land.
+
+This surface shipped in Phase 1.7 (2026-04-19): the binary exposes
+`sift export --format json` and `sift state --at-turn N --format json`
+as documented above, with the schema in `docs/export-schema.md`. The
+§10 retrofit table has been updated (sift-side row closed; agx-side
+overlay rendering remains open as a downstream consumer).
 
 ---
 
@@ -289,12 +317,21 @@ opportunistically when the affected code changes for other reasons.
 
 | Item | Target | Current | Notes |
 |---|---|---|---|
-| sift accept key | `Enter` / `Space` | `a` | Free up `a` for annotate (§1 row "annotate"). |
-| sift annotate key | `a` | `n` | Align with agx; frees `n` for next-search-match. |
-| sift search | `/` + `n`/`N` | none | Add to `sift review` TUI to match agx. |
-| agx `doctor` | report siblings | not shipped | Retrofit from sift's `doctor` design when sift ships it. |
-| rgx `doctor` | report siblings | not shipped | Same. |
-| agx `--summary` on sift integration | list sift ledger status | no sift awareness | Deferred per rule 5 (one-way coupling). Revisit only if sift validates and users ask. |
+| rgx `doctor` | report siblings | not shipped | Retrofit from sift's `doctor` design (shipped v0.3). |
+| agx overlay rendering | decorate timeline + diff turn pair | not shipped | Downstream consumer of sift's Phase 1.7 substrate. Agx-side; tracked in agx's roadmap. Sift-side requires no coordination — ships on agx's cadence. |
+
+**Closed (shipped):**
+
+- sift publish surface (`sift export --format json` + `sift state
+  --at-turn N`): shipped Phase 1.7. §5 sift section moved from
+  "planned" to "shipped". agx-side overlay rendering remains open as
+  a downstream consumer (row above), needs no sift coordination.
+- sift accept key (`Enter` / `Space`): additive alias shipped v0.3;
+  legacy `a`=accept removed in v0.4. Recorded in §1.
+- sift annotate key (`a`): flipped from `n` in v0.4. Recorded in §1.
+- sift search (`/` + `n` / `N`): added in v0.4. Recorded in §1.
+- agx `doctor`: shipped in agx v0.3 (`agx doctor [--json]`), reporting
+  agx version and features plus agx-mcp, sift and rgx presence.
 
 ---
 
