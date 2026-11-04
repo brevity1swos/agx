@@ -70,8 +70,8 @@ when the sibling is missing (status-bar hint, not a hard failure).
 | Key | From | To | Named flow |
 |---|---|---|---|
 | `t` | sift review | `agx --jump-to <session>:<step>` | Timeline jump |
-| `p` | sift review (planned) | `rgx --pattern <policy-rule>` | Policy debug |
-| `R` | agx (proposed, Phase 5+) | `rgx --pattern <regex-arg>` | Regex lens |
+| `p` | sift review (planned) | `rgx <policy-rule>` | Policy debug |
+| `R` | agx (proposed, Phase 5+) | `rgx <regex-arg>` | Regex lens |
 
 ---
 
@@ -170,10 +170,11 @@ release note; silent breaks are bugs.
 
 - **`rgx -P` / `rgx --output-pattern`** — prints the final pattern to
   stdout on exit; enables `eval $(rgx -P)`.
-- **`rgx --pattern <pat> --test <str> --print`** — non-interactive
-  match check; stdout receives ANSI-colored matches or empty.
+- **`rgx --print --text <str> <pat>`** — non-interactive match
+  check (the pattern is positional; `--test` is rgx's TOML test-suite
+  mode, not input text); stdout receives ANSI-colored matches or empty.
   Exit: 0 match, 1 no match, 2 error.
-- **`rgx --version`** — stable machine-parseable format.
+- **`rgx --version`** — stable machine-parseable format (`rgx X.Y.Z`).
 
 ### sift → public for agx (shipped, Phase 1.7)
 
