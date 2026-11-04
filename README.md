@@ -44,7 +44,7 @@ If you're building a custom eval harness, RL trajectory pipeline, or any tool th
 cargo add agx-core
 ```
 
-`agx-core` is the pure, TUI-free heart of the binary — every parser (Claude Code, Codex, Gemini, OpenAI-generic, LangChain, Vercel AI SDK, OTel GenAI JSON, OTel binary protobuf), the timeline / step model, corpus aggregation, cost / pricing, PII scanner, and the JSON export shape that `agx --export json` writes. Zero dependency on ratatui / crossterm / arboard. Documentation: [docs.rs/agx-core](https://docs.rs/agx-core). The Python bindings (`pip install agx-py`, imported as `agx`) and WASM bindings (`agx-wasm` on npm) wrap this same crate.
+`agx-core` is the pure, TUI-free heart of the binary — every parser (Claude Code, Codex, Gemini, OpenAI-generic, LangChain, Vercel AI SDK, OTel GenAI JSON, OTel binary protobuf), the timeline / step model, corpus aggregation, cost / pricing, PII scanner, and the JSON export shape that `agx --export json` writes. Zero dependency on ratatui / crossterm / arboard. Documentation: [docs.rs/agx-core](https://docs.rs/agx-core). The Python bindings ([`crates/agx-py`](crates/agx-py), imported as `agx`) and WASM bindings ([`crates/agx-wasm`](crates/agx-wasm)) wrap this same crate. They are not yet published to PyPI or npm; build them from source as each crate's README describes.
 
 ### From source
 
