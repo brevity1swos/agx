@@ -6,6 +6,85 @@ Stability commitments — which fields, flags, and APIs will or won't change acr
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-05
+
+### Bug Fixes
+
+- *(subagents)* Strip control and bidi characters from printed fields
+Reports, descriptions, agent ids and branch names come from session
+  files, which quote raw tool output. Printed as-is, an ESC sequence in a
+  report could retitle or clear the user's terminal, and a bidi override
+  could reorder what is shown. Text output now replaces both with U+FFFD.
+  The --json output was already safe; serde escapes control characters.
+- *(summary)* Strip control and bidi characters from printed labels
+--summary printed step labels and model names straight from the session
+  file, so an ESC sequence quoted from tool output reached the terminal.
+  Route both through the printable() helper the subagents output uses.
+
+### Documentation
+
+- *(conventions)* Resync with sift and fix the version contract
+The agx copy had fallen behind sift's (sift's phase 1.7 publish surface
+  and the closed retrofit items were missing). Take sift's copy, state
+  that --version prints `agx X.Y.Z` as it actually does, and record agx
+  doctor as shipped. Both copies are now byte-identical.
+- *(readme)* Stop advertising unpublished python and wasm packages
+agx-py is not on PyPI and agx-wasm is not on npm: the agx-core-v0.3.0
+  publish runs failed (PyPI has no trusted publisher registered, npm
+  needs a first manual publish). Point at build-from-source until the
+  packages exist.
+- *(conventions)* Match the rgx cli contract to its real flags
+rgx takes the pattern positionally and has no --pattern flag; --test
+  loads TOML test suites, so input text goes through --text.
+- *(agent-guide)* Match the 0.3 cli and install paths
+The guide still described v0.1: `--version` with a feature suffix it no
+  longer prints, a corpus --jsonl shape with totals/tool_stats instead of
+  the flat fields, `cargo install --path .` and a `--features mcp` build
+  for agx-mcp, and an MCP tool list without agx_list_annotations.
+- *(skills)* Package the agent guide as an installable agx skill
+skills/agx/SKILL.md condenses docs/agent-guide.md into the SKILL.md
+  format that Claude Code and other agents load from a skills directory,
+  so an assistant reaches for agx when asked what a session did or cost.
+  Every recipe was run against agx 0.3.0. It covers released commands
+  only; `agx subagents` joins once it ships. The guide links to it.
+
+### Features
+
+- *(subagents)* Show the subagent tree of a claude code session
+Claude Code keeps each subagent's transcript in
+  <session>/subagents/agent-<id>.jsonl, not in the parent file, so agx
+  never saw delegated work. `agx subagents <session>` loads those
+  transcripts and links each one to the step that spawned it (via the
+  meta.json toolUseId, searched across the parent and every subagent so
+  nested delegation resolves) and to the report it handed back.
+
+  Reports arrive as a peer `attachment` when the spawner is busy and as an
+  isMeta `user` entry when it is idle; the queue-operation copy in between
+  is skipped. Older versions (2.1.284) carry only `body`, so the report is
+  cut out after the harness preamble. A missing sidecar leaves a subagent
+  unlinked and an unparseable transcript records a load error; neither
+  fails the tree. `--json` emits the same tree.
+- *(subagents)* Check hand-back test claims against the transcript
+A subagent's report says "tests pass"; its transcript shows what it ran.
+  `agx subagents` now compares the two for the final report: supported,
+  contradicted (last run failed), stale (code edited after the last run),
+  or unverified (no test run in the transcript). It also notes a test
+  count that differs from the run's and later test commands whose output
+  had no summary.
+
+  Evidence is the runner's summary line, never is_error: piping through
+  `tail` hides the exit code, so failing runs record as successful calls.
+  Cargo, pytest, jest and vitest summaries are parsed, including counts
+  added by `sort | uniq -c`. Only shell results count as runs, a runner
+  must start a command segment (not appear in a PR body), and edits to
+  doc files don't make a run stale. Bash-made edits are not detected.
+
+### Ci
+
+- *(wasm)* Publish to npm with trusted publishing instead of a token
+npm trusted publishing (OIDC) removes the NPM_TOKEN secret and attaches provenance automatically. Needs Node >= 22.14 and npm >= 11.5.1, so the publish job moves to Node 22 and installs npm 11.21.0. The package has to exist on npm before a trusted publisher can be configured, so the first version is published by hand.
+
+
 ## [0.3.0] - 2026-10-27
 
 ### Bug Fixes

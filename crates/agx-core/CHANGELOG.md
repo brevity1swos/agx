@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.1] - 2026-11-05
+
+### Features
+
+- *(subagents)* Show the subagent tree of a claude code session
+Claude Code keeps each subagent's transcript in
+  <session>/subagents/agent-<id>.jsonl, not in the parent file, so agx
+  never saw delegated work. `agx subagents <session>` loads those
+  transcripts and links each one to the step that spawned it (via the
+  meta.json toolUseId, searched across the parent and every subagent so
+  nested delegation resolves) and to the report it handed back.
+
+  Reports arrive as a peer `attachment` when the spawner is busy and as an
+  isMeta `user` entry when it is idle; the queue-operation copy in between
+  is skipped. Older versions (2.1.284) carry only `body`, so the report is
+  cut out after the harness preamble. A missing sidecar leaves a subagent
+  unlinked and an unparseable transcript records a load error; neither
+  fails the tree. `--json` emits the same tree.
+- *(subagents)* Check hand-back test claims against the transcript
+A subagent's report says "tests pass"; its transcript shows what it ran.
+  `agx subagents` now compares the two for the final report: supported,
+  contradicted (last run failed), stale (code edited after the last run),
+  or unverified (no test run in the transcript). It also notes a test
+  count that differs from the run's and later test commands whose output
+  had no summary.
+
+  Evidence is the runner's summary line, never is_error: piping through
+  `tail` hides the exit code, so failing runs record as successful calls.
+  Cargo, pytest, jest and vitest summaries are parsed, including counts
+  added by `sort | uniq -c`. Only shell results count as runs, a runner
+  must start a command segment (not appear in a PR body), and edits to
+  doc files don't make a run stale. Bash-made edits are not detected.
+
+
 ## [0.3.0] - 2026-10-27
 
 ### Bug Fixes
