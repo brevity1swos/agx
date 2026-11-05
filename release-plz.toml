@@ -16,8 +16,9 @@ release_commits = "^(feat|fix|perf|refactor|docs?\\(readme\\))[(:!]"
 #
 # agx-py and agx-wasm have publish = false in their own Cargo.toml
 # — they ship to PyPI via maturin and to npm via wasm-pack
-# respectively, not to crates.io. agx-mcp is the local MCP-server
-# bin reused only inside this workspace and stays unpublished too.
+# respectively, not to crates.io. agx-mcp, the MCP-server binary,
+# has no entry here and publishes to crates.io under release-plz's
+# defaults (`cargo install agx-mcp`).
 [[package]]
 name = "agx-core"
 publish = true
