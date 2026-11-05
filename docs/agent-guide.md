@@ -196,6 +196,37 @@ for steps, tool calls, tokens_in, tokens_out; plus branched /
 annotated / errored rates across the corpus. Combine with `--json`
 for machine-readable output.
 
+### "What did the subagents do?" / "Did that subagent really run the tests?"
+
+```bash
+agx subagents <session>          # tree: spawn step, type, task, report
+agx subagents --json <session>   # {session, steps, subagents: [...]}
+```
+
+Claude Code only. Reads `<session-id>/subagents/` beside the
+session file. Each subagent entry carries `agent_id`, `agent_type`,
+`description`, `spawn_step`, `spawned_by` (`{"kind": "session"}`,
+`{"kind": "subagent", "agent_id": …}` for nested spawns, or
+`{"kind": "unknown"}`), `step_count`, `worktree_branch`, `finished`,
+`reports` (hand-back text, newest last), `load_error`, and
+`claim_check`.
+
+`claim_check` is set when the last report claims tests pass. agx
+compares the claim with the subagent's own last test run (cargo,
+nextest, pytest, jest, vitest summaries) and returns a `verdict`:
+
+| Verdict | Meaning |
+|---|---|
+| `supported` | the last run passed and no code was edited after it |
+| `contradicted` | the last run had failures |
+| `stale` | code was edited after the last run |
+| `unverified` | no test run with a recognizable summary was found |
+
+`last_run` gives `{step, passed, failed}`; `claimed_count` is the
+number the report stated, if any. Raise anything other than
+`supported` with the user. `supported` means the transcript backs the
+claim, not that the tests are good.
+
 ### "Is agx-mcp / sift / rgx installed?"
 
 ```bash
