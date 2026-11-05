@@ -220,9 +220,10 @@ nextest, pytest, jest, vitest summaries) and returns a `verdict`:
 | `supported` | the last run passed and no code was edited after it |
 | `contradicted` | the last run had failures |
 | `stale` | code was edited after the last run |
-| `unverified` | no test run with a recognizable summary was found |
+| `unverified` | no test run with a recognizable summary was found, the last run executed no tests (a filter that matched nothing), or the claim covers all tests but the last run was filtered by test name |
 
-`last_run` gives `{step, passed, failed}`; `claimed_count` is the
+`last_run` gives `{step, passed, failed, filter}`, where `filter` is the
+test-name filter the run used (`cargo test foo`, `pytest -k foo`), if any; `claimed_count` is the
 number the report stated, if any. Raise anything other than
 `supported` with the user. `supported` means the transcript backs the
 claim, not that the tests are good.

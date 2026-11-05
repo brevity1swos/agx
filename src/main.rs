@@ -494,20 +494,34 @@ fn print_subagent(sub: &agx::subagents::Subagent, depth: usize) {
 fn print_claim_check(check: &agx::claims::ClaimCheck, pad: &str) {
     use agx::claims::Verdict;
     let run = check.last_run.as_ref().map(|r| {
+        let filter = r
+            .filter
+            .as_deref()
+            .map(|f| format!(", filtered by `{}`", printable(f)))
+            .unwrap_or_default();
         format!(
-            "last test run (step {}): {} passed, {} failed",
+            "last test run (step {}{filter}): {} passed, {} failed",
             r.step, r.passed, r.failed
         )
     });
-    let line = match check.verdict {
-        Verdict::Supported => format!("supported, {}", run.unwrap_or_default()),
-        Verdict::Contradicted => format!("CONTRADICTED, {}", run.unwrap_or_default()),
-        Verdict::Stale => format!(
+    let line = match (check.verdict, &check.last_run) {
+        (Verdict::Supported, _) => format!("supported, {}", run.unwrap_or_default()),
+        (Verdict::Contradicted, _) => format!("CONTRADICTED, {}", run.unwrap_or_default()),
+        (Verdict::Stale, _) => format!(
             "STALE, {} file edit(s) after {}",
             check.edits_after_run,
             run.unwrap_or_default()
         ),
-        Verdict::Unverified => "UNVERIFIED, no test run found in the transcript".to_string(),
+        (Verdict::Unverified, None) => {
+            "UNVERIFIED, no test run found in the transcript".to_string()
+        }
+        (Verdict::Unverified, Some(r)) if r.passed == 0 => {
+            format!("UNVERIFIED, no tests ran: {}", run.unwrap_or_default())
+        }
+        (Verdict::Unverified, Some(_)) => format!(
+            "UNVERIFIED, the claim covers all tests but the run was filtered: {}",
+            run.unwrap_or_default()
+        ),
     };
     println!("{pad}  check: {line}");
     if let (Some(claimed), Some(run)) = (check.claimed_count, &check.last_run)
