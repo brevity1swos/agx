@@ -314,6 +314,7 @@ Everything below works end-to-end on real sessions across all supported formats,
 
 **Tooling**
 - **`agx doctor`** — health-check report: version, features, stepwise sibling availability (sift, rgx, agx-mcp)
+- **`agx subagents`** — tree of the subagents a Claude Code session delegated to (spawn step, task, hand-back report), with a check of each "tests pass" report against the subagent's own last test run
 - **`agx-mcp`** — MCP server for agent self-introspection mid-session (list steps, read annotations, export)
 - **Experimental replay** (`R`, hidden flags) — re-execute a tool call from the TUI with triple-gate safety (flag + backend flag + per-invocation confirm)
 

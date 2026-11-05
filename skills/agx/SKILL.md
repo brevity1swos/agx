@@ -1,6 +1,6 @@
 ---
 name: agx
-description: Inspect AI coding-agent session transcripts (Claude Code, Codex CLI, Gemini CLI, OpenAI-compatible, LangChain, Vercel AI SDK, OpenTelemetry GenAI) with the agx CLI. Use when the user asks what an agent did in a session, what a session cost in tokens or dollars, which tools it called, where it hit errors, how two runs differ, which past sessions match a criterion, or how to export or redact a session for sharing or a dataset.
+description: Inspect AI coding-agent session transcripts (Claude Code, Codex CLI, Gemini CLI, OpenAI-compatible, LangChain, Vercel AI SDK, OpenTelemetry GenAI) with the agx CLI. Use when the user asks what an agent did in a session, what a session cost in tokens or dollars, which tools it called, where it hit errors, what its subagents did and whether their "tests pass" reports hold up, how two runs differ, which past sessions match a criterion, or how to export or redact a session for sharing or a dataset.
 ---
 
 # agx
@@ -84,6 +84,20 @@ agx --jump-to <N> <session>
 ```bash
 agx <session-a> --diff <session-b>
 ```
+
+**Subagents of a Claude Code session**, and whether their "tests pass"
+reports hold up:
+```bash
+agx subagents <session>                       # tree for the user
+agx subagents --json <session> \
+  | jq '.subagents[] | {agent_id, description, spawn_step,
+                        verdict: .claim_check.verdict}'
+```
+`claim_check` compares a report's test claim with the subagent's own
+last test run. Verdicts: `supported`, `contradicted` (last run
+failed), `stale` (code edited after the run), `unverified` (no run
+found). Raise anything but `supported`, and present `supported` as
+"the transcript backs the claim", not as proof the tests are good.
 
 **Slice a long session** before exporting or summarizing:
 `--after 10m`, `--before 1h`, `--after-step 100`, `--before-step 200`, or
