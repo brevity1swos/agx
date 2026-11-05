@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.3] - 2026-11-05
+
+### Miscellaneous
+
+- Updated the following local packages: agx-core
+
+
 ## [0.2.2] - 2026-10-27
 
 ### Bug Fixes
