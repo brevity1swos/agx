@@ -96,7 +96,8 @@ agx subagents --json <session> \
 `claim_check` compares a report's test claim with the subagent's own
 last test run. Verdicts: `supported`, `contradicted` (last run
 failed), `stale` (code edited after the run), `unverified` (no run
-found). Raise anything but `supported`, and present `supported` as
+found, a run that executed no tests, or a name-filtered run behind an
+"all tests pass" claim). Raise anything but `supported`, and present `supported` as
 "the transcript backs the claim", not as proof the tests are good.
 
 **Slice a long session** before exporting or summarizing:

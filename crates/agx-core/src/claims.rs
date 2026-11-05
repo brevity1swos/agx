@@ -8,7 +8,9 @@
 //! - **contradicted** — the last run had failures.
 //! - **stale** — files were edited (Write / Edit / MultiEdit /
 //!   NotebookEdit) after the last run, so it doesn't cover the final code.
-//! - **unverified** — no parseable test run in the transcript at all.
+//! - **unverified** — no parseable test run in the transcript, a last
+//!   run that executed no tests (a filter that matched nothing), or a
+//!   filtered last run behind a claim about all tests.
 //! - **supported** — the last run passed and nothing was edited after it.
 //!
 //! Only the exit summary is trusted, never `is_error`: piping a test
@@ -52,6 +54,9 @@ pub struct TestRun {
     pub step: usize,
     pub passed: u64,
     pub failed: u64,
+    /// The test-name filter the run's command passed (`cargo test foo`,
+    /// `pytest -k foo`, `go test -run Foo`, `jest -t foo`), if any.
+    pub filter: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -104,6 +109,7 @@ pub fn check(report: &str, steps: &[Step]) -> Option<ClaimCheck> {
                     step: i,
                     passed,
                     failed,
+                    filter: test_filter(input),
                 });
             }
             None if invokes_test_command(input) => unparsed.push(i),
@@ -120,7 +126,10 @@ pub fn check(report: &str, steps: &[Step]) -> Option<ClaimCheck> {
     let verdict = match &last_run {
         None => Verdict::Unverified,
         Some(run) if run.failed > 0 => Verdict::Contradicted,
+        // "0 passed; 0 failed" passes vacuously, e.g. a filter with a typo.
+        Some(run) if run.passed == 0 => Verdict::Unverified,
         Some(_) if edits_after_run > 0 => Verdict::Stale,
+        Some(run) if run.filter.is_some() && claims_all_tests(&claim) => Verdict::Unverified,
         Some(_) => Verdict::Supported,
     };
 
@@ -139,19 +148,134 @@ pub fn check(report: &str, steps: &[Step]) -> Option<ClaimCheck> {
 /// a newline, past any `VAR=value` prefixes). A runner named inside a PR
 /// body or commit message doesn't count.
 fn invokes_test_command(input: &str) -> bool {
-    let command = input
+    !runner_invocations(&shell_command(input)).is_empty()
+}
+
+/// The first test-name filter among the runner invocations in a shell
+/// call's command. Package and path selection (`-p x`, `pytest tests/`)
+/// is not a filter; only arguments that pick tests by name are.
+fn test_filter(input: &str) -> Option<String> {
+    runner_invocations(&shell_command(input))
+        .into_iter()
+        .find_map(|(runner, args)| match runner {
+            "cargo test" | "cargo nextest" => cargo_filter(runner, &args),
+            "pytest" => flag_value(&args, &["-k"]).or_else(|| {
+                args.iter()
+                    .find(|a| a.contains("::"))
+                    .map(|a| a.to_string())
+            }),
+            "go test" => flag_value(&args, &["-run", "--run"]),
+            _ => flag_value(&args, &["-t", "--testNamePattern"]),
+        })
+}
+
+/// The `command` string of a shell call's `Input:` JSON.
+fn shell_command(input: &str) -> String {
+    input
         .split_once("Input:\n")
         .and_then(|(_, json)| serde_json::from_str::<serde_json::Value>(json).ok())
         .and_then(|v| v["command"].as_str().map(str::to_string))
-        .unwrap_or_default();
-    command.split(['\n', ';', '|', '&']).any(|segment| {
-        let words: Vec<&str> = segment
-            .split_whitespace()
-            .skip_while(|w| w.contains('=') && !w.starts_with('-'))
-            .collect();
-        let segment = words.join(" ");
-        TEST_COMMANDS.iter().any(|c| segment.starts_with(c))
+        .unwrap_or_default()
+}
+
+/// Each command segment that starts with a runner from [`TEST_COMMANDS`],
+/// as (runner, the words after it). Redirections (`> out.log`, `2>`) are
+/// dropped from the words so their targets don't read as filters.
+fn runner_invocations(command: &str) -> Vec<(&'static str, Vec<&str>)> {
+    command
+        .split(['\n', ';', '|', '&'])
+        .filter_map(|segment| {
+            let words: Vec<&str> = segment
+                .split_whitespace()
+                .skip_while(|w| w.contains('=') && !w.starts_with('-'))
+                .collect();
+            let joined = words.join(" ");
+            let runner = TEST_COMMANDS.iter().find(|c| joined.starts_with(*c))?;
+            let mut args = Vec::new();
+            let mut rest = words[runner.split(' ').count()..].iter();
+            while let Some(&word) = rest.next() {
+                if word.contains(['>', '<']) {
+                    if word.ends_with(['>', '<']) {
+                        rest.next();
+                    }
+                    continue;
+                }
+                args.push(word);
+            }
+            Some((*runner, args))
+        })
+        .collect()
+}
+
+/// cargo test / nextest: a bare word picks tests by name, before or after
+/// `--`; so does a nextest filterset (`-E`). Flags that take a value are
+/// skipped together with it.
+fn cargo_filter(runner: &str, args: &[&str]) -> Option<String> {
+    const VALUE_FLAGS: &[&str] = &[
+        "-p",
+        "--package",
+        "--exclude",
+        "-F",
+        "--features",
+        "--bin",
+        "--test",
+        "--example",
+        "--bench",
+        "--manifest-path",
+        "-j",
+        "--jobs",
+        "--target",
+        "--target-dir",
+        "--profile",
+        "--cargo-profile",
+        "--color",
+        "--message-format",
+        "--config",
+        "-Z",
+        "--skip",
+        "--test-threads",
+        "--format",
+        "--logfile",
+    ];
+    if let Some(expr) = flag_value(args, &["-E", "--filterset", "--filter-expr"]) {
+        return Some(expr);
+    }
+    let mut words = args.iter();
+    if runner == "cargo nextest" && args.first() == Some(&"run") {
+        words.next();
+    }
+    while let Some(&word) = words.next() {
+        if VALUE_FLAGS.contains(&word) {
+            words.next();
+        } else if !word.starts_with('-') {
+            return Some(word.to_string());
+        }
+    }
+    None
+}
+
+/// The value of the first of `flags` in `args`, as `-k expr` or `-k=expr`.
+fn flag_value(args: &[&str], flags: &[&str]) -> Option<String> {
+    args.iter().enumerate().find_map(|(i, arg)| {
+        flags.iter().find_map(|flag| {
+            if arg == flag {
+                args.get(i + 1).map(|v| v.to_string())
+            } else {
+                arg.strip_prefix(flag)
+                    .and_then(|rest| rest.strip_prefix('='))
+                    .map(str::to_string)
+            }
+        })
     })
+}
+
+/// Whether a claim covers the whole suite ("all pass", "the full suite")
+/// rather than the tests a filter would select.
+fn claims_all_tests(claim: &str) -> bool {
+    let lower = claim.to_lowercase();
+    ["all ", "full ", "entire ", "whole ", "every "]
+        .iter()
+        .any(|w| lower.contains(w))
 }
 
 /// An edit-tool call whose target isn't a doc file. A call whose input
@@ -406,6 +530,70 @@ mod tests {
         .concat();
         let c = check(REPORT, &steps).unwrap();
         assert_eq!(c.later_unparsed_runs, 1);
+    }
+
+    #[test]
+    fn unverified_when_last_run_executed_no_tests() {
+        let empty = "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 31 filtered out\n";
+        let steps: Vec<Step> = [
+            bash("a", "cargo test", CARGO_OK),
+            bash("b", "cargo test parse_sumary", empty),
+        ]
+        .concat();
+        let c = check(REPORT, &steps).unwrap();
+        assert_eq!(c.verdict, Verdict::Unverified);
+        assert_eq!(c.last_run.unwrap().filter.as_deref(), Some("parse_sumary"));
+    }
+
+    #[test]
+    fn filtered_run_cannot_back_an_all_tests_claim() {
+        let steps: Vec<Step> = bash("a", "cargo test -p x parse_summary", CARGO_OK).to_vec();
+        // REPORT says "(17 tests) all pass".
+        assert_eq!(check(REPORT, &steps).unwrap().verdict, Verdict::Unverified);
+        let narrow = check("The new parse_summary test passes.", &steps).unwrap();
+        assert_eq!(narrow.verdict, Verdict::Supported);
+        assert_eq!(
+            narrow.last_run.unwrap().filter.as_deref(),
+            Some("parse_summary")
+        );
+    }
+
+    #[test]
+    fn finds_test_name_filters_per_runner() {
+        let filter =
+            |command: &str| test_filter(&format!("Input:\n{{\"command\": \"{command}\"}}"));
+        assert_eq!(filter("cargo test foo").as_deref(), Some("foo"));
+        assert_eq!(filter("cargo test -- --exact foo").as_deref(), Some("foo"));
+        assert_eq!(
+            filter("cargo nextest run -E test(foo)").as_deref(),
+            Some("test(foo)")
+        );
+        assert_eq!(filter("pytest -k slow tests/").as_deref(), Some("slow"));
+        assert_eq!(
+            filter("pytest tests/a.py::test_b").as_deref(),
+            Some("tests/a.py::test_b")
+        );
+        assert_eq!(filter("go test ./... -run TestX").as_deref(), Some("TestX"));
+        assert_eq!(filter("npm test -- -t login").as_deref(), Some("login"));
+        assert_eq!(
+            filter("npx jest --testNamePattern=login").as_deref(),
+            Some("login")
+        );
+        // Package, target and path selection, harness flags and
+        // redirections are not test-name filters.
+        for command in [
+            "cargo test",
+            "cargo test -p agx-core --features otel-proto",
+            "cargo test --workspace -- --nocapture --test-threads 1",
+            "cargo test --test cli 2>&1 | tail -5",
+            "cargo test > out.log",
+            "cargo nextest run --workspace",
+            "pytest tests/",
+            "go test ./...",
+            "npm test",
+        ] {
+            assert_eq!(filter(command), None, "{command}");
+        }
     }
 
     #[test]
