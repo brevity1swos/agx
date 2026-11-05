@@ -6,6 +6,16 @@ Stability commitments — which fields, flags, and APIs will or won't change acr
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-11-05
+
+### Documentation
+
+- *(subagents)* Document agx subagents in the guide, skill and readme
+agx subagents shipped in 0.3.1 but no doc mentioned it. Add a guide
+  section with the JSON fields and claim-check verdicts, a skill recipe
+  (and a description trigger so the skill loads for subagent questions),
+  and a readme tooling bullet.
+
 ## [0.3.1] - 2026-11-05
 
 ### Bug Fixes
