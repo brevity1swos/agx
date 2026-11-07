@@ -6,6 +6,21 @@ Stability commitments — which fields, flags, and APIs will or won't change acr
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-11-07
+
+### Bug Fixes
+
+- *(subagents)* Don't count empty or filtered test runs as backing a claim
+A last run of "0 passed; 0 failed" (a test-name filter with a typo)
+  passed vacuously and marked "all tests pass" as supported. A run
+  narrowed to one test by name did the same for a claim about the whole
+  suite. Both now read unverified. TestRun records the name filter
+  (cargo, nextest -E, pytest -k / node ids, go -run, jest/vitest -t) and
+  the text output shows it; package and path selection are not filters.
+
+  Checked against every local session with subagents: no verdict changed.
+
+
 ## [0.3.2] - 2026-11-05
 
 ### Documentation
