@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.1] - 2026-11-10
+
+### Documentation
+
+- *(notify)* Backtick the verdict placeholder so rustdoc accepts it
+
+### Features
+
+- *(live)* Alert when a subagent's tests-pass hand-back isn't backed
+`agx --live --notify-on-claims` rechecks hand-backs every 2s. A new
+  report whose claim check is anything but supported shows in the status
+  bar, and as a desktop notification on builds with the notifications
+  feature. Reports already in the session at launch don't alert, and
+  nested subagents are covered because every transcript's hand-backs are
+  counted, not just the session's.
+
+
 ## [0.4.0] - 2026-11-07
 
 ### Bug Fixes
