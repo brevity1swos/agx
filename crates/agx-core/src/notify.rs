@@ -29,7 +29,7 @@
 //!   expected to `.ok()` them so transient D-Bus hiccups don't crash
 //!   the TUI.
 //! - `claim(subagent, verdict)` fires a notification titled "agx:
-//!   subagent claim <verdict>" with the subagent's task as the body.
+//!   subagent claim `<verdict>`" with the subagent's task as the body.
 //! - `idle(duration_s)` fires a notification with title "agx: live
 //!   session idle" when the file has not grown for the configured
 //!   duration.
