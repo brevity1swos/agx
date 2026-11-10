@@ -969,15 +969,19 @@ impl Drop for TerminalGuard {
 /// Runtime configuration for live-mode desktop notifications. Kept
 /// here rather than in `notify.rs` because the field shape is a TUI
 /// concern — `notify.rs` owns only the "fire a notification" wrapper,
-/// not the policy for when to fire. Both fields are no-ops on a
-/// feature-off build (the `notify::error` / `notify::idle` calls
-/// return `Ok(())` without touching anything), so leaving this struct
-/// outside any `cfg` keeps the event loop readable.
+/// not the policy for when to fire. The desktop notifications are
+/// no-ops on a feature-off build (the `notify::*` calls return `Ok(())`
+/// without touching anything), so leaving this struct outside any
+/// `cfg` keeps the event loop readable.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NotifyConfig {
     /// Fire a notification when a newly arrived `tool_result` matches
     /// `is_error_result`.
     pub on_error: bool,
+    /// Alert when a subagent hands back a "tests pass" claim whose
+    /// check is anything but `supported`. Shown in the status bar on
+    /// every build; also a desktop notification with the feature on.
+    pub on_claims: bool,
     /// Fire a notification when the session hasn't grown for at least
     /// this many milliseconds. `None` disables. Fires at most once per
     /// idle interval — growth resets the trigger.
@@ -1040,6 +1044,9 @@ pub fn run(
     result
 }
 
+/// How often `--notify-on-claims` rescans hand-backs.
+const CLAIM_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+
 // run_loop is intentionally one function — TUI render + event handling form one
 // logical operation per frame; splitting hurts readability more than it helps.
 #[allow(clippy::too_many_lines)]
@@ -1057,6 +1064,12 @@ fn run_loop(
     // threshold has been crossed.
     let mut last_growth = std::time::Instant::now();
     let mut idle_fired = false;
+    // Hand-back checks read every subagent transcript, so they run on a
+    // timer rather than on every growth of the session file.
+    let mut claim_watch = session_path
+        .filter(|_| notify.on_claims)
+        .map(crate::subagents::HandbackWatch::new);
+    let mut last_claim_poll = std::time::Instant::now();
     // Phase 5.4 — pending replay confirm. Set when the user presses
     // `R` on a replayable step; cleared on y/n. A Some value means
     // "next keystroke is a confirm response."
@@ -1088,6 +1101,28 @@ fn run_loop(
                 // Best-effort — a failed OS notification must never
                 // crash the live loop.
                 let _ = crate::notify::error(&label);
+            }
+        }
+
+        if let Some(watch) = claim_watch.as_mut()
+            && last_claim_poll.elapsed() >= CLAIM_POLL_INTERVAL
+        {
+            last_claim_poll = std::time::Instant::now();
+            for alert in watch.poll() {
+                // The task text comes from the transcript; keep control
+                // characters out of the terminal.
+                let who: String = alert
+                    .description
+                    .as_deref()
+                    .unwrap_or(&alert.agent_id)
+                    .chars()
+                    .filter(|c| !c.is_control())
+                    .collect();
+                app.status_msg = Some(format!(
+                    "subagent `{who}` claims tests pass: {}; see `agx subagents`",
+                    alert.verdict.as_str()
+                ));
+                let _ = crate::notify::claim(&who, alert.verdict);
             }
         }
 

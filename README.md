@@ -115,6 +115,7 @@ agx --live ~/.claude/projects/<project>/<session>.jsonl
 # Live mode with desktop notifications (opt-in: rebuild with `--features notifications`)
 agx --live --notify-on-error <session>          # OS notify on every new error tool_result
 agx --live --notify-on-idle 10m <session>       # OS notify when session hasn't grown for 10 minutes
+agx --live --notify-on-claims <session>         # alert when a subagent's "tests pass" hand-back isn't backed (status bar; OS notify with the feature)
 
 # Compare two sessions — text summary
 agx session_a.jsonl --diff session_b.jsonl
@@ -314,7 +315,7 @@ Everything below works end-to-end on real sessions across all supported formats,
 
 **Tooling**
 - **`agx doctor`** — health-check report: version, features, stepwise sibling availability (sift, rgx, agx-mcp)
-- **`agx subagents`** — tree of the subagents a Claude Code session delegated to (spawn step, task, hand-back report), with a check of each "tests pass" report against the subagent's own last test run
+- **`agx subagents`** — tree of the subagents a Claude Code session delegated to (spawn step, task, hand-back report), with a check of each "tests pass" report against the subagent's own last test run. `--live --notify-on-claims` raises the check as an alert when a new report arrives
 - **`agx-mcp`** — MCP server for agent self-introspection mid-session (list steps, read annotations, export)
 - **Experimental replay** (`R`, hidden flags) — re-execute a tool call from the TUI with triple-gate safety (flag + backend flag + per-invocation confirm)
 
