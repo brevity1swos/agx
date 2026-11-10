@@ -139,6 +139,15 @@ struct Cli {
     #[arg(long, requires = "live")]
     notify_on_error: bool,
 
+    /// In `--live` mode, alert when a subagent hands back a "tests
+    /// pass" report its own transcript doesn't back: any `agx
+    /// subagents` verdict other than `supported`. The alert shows in the
+    /// status bar, and as a desktop notification on builds with
+    /// `--features notifications`. Claude Code sessions only. Requires
+    /// `--live`.
+    #[arg(long, requires = "live")]
+    notify_on_claims: bool,
+
     /// In `--live` mode, fire a desktop notification when the watched
     /// session hasn't grown for this duration. Same grammar as
     /// `--after` (`30s` / `5m` / `1h`, compounds, bare-int seconds).
@@ -941,6 +950,7 @@ fn main() -> Result<()> {
     }
     let notify_cfg = tui::NotifyConfig {
         on_error: cli.notify_on_error,
+        on_claims: cli.notify_on_claims,
         on_idle_ms: notify_idle_ms,
     };
 

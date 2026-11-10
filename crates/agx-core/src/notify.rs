@@ -1,6 +1,8 @@
 //! Desktop notifications for `--live` mode — fires when the watched
-//! session grows with a new error tool_result, or when it stops growing
-//! for a user-specified duration. Opt-in via `--features notifications`.
+//! session grows with a new error tool_result, when a subagent hands back
+//! a "tests pass" claim its transcript doesn't back, or when the session
+//! stops growing for a user-specified duration. Opt-in via
+//! `--features notifications`.
 //!
 //! # Why feature-gated
 //!
@@ -13,11 +15,12 @@
 //! # Fallback behavior
 //!
 //! Without the feature:
-//! - `error(…)` / `idle(…)` are no-ops; they return `Ok(())` without
+//! - `error(…)` / `claim(…)` / `idle(…)` are no-ops; they return `Ok(())` without
 //!   doing anything. Callers never need a `cfg!` check.
 //! - `FEATURE_DISABLED_MESSAGE` exists for the Cli dispatch in
 //!   main.rs to print a one-time rebuild hint when the user passes
 //!   `--notify-on-error` / `--notify-on-idle` on a feature-off build.
+//!   `--notify-on-claims` still alerts in the TUI status bar there.
 //!
 //! With the feature:
 //! - `error(step_label)` fires a notification with title "agx: error
@@ -25,6 +28,8 @@
 //!   OS notification failures return `Err` but the live loop is
 //!   expected to `.ok()` them so transient D-Bus hiccups don't crash
 //!   the TUI.
+//! - `claim(subagent, verdict)` fires a notification titled "agx:
+//!   subagent claim <verdict>" with the subagent's task as the body.
 //! - `idle(duration_s)` fires a notification with title "agx: live
 //!   session idle" when the file has not grown for the configured
 //!   duration.
@@ -36,6 +41,7 @@
 //! `notify-rust`'s notification API so the tui.rs event loop can
 //! stay format-native without dragging platform deps into its tree.
 
+use crate::claims::Verdict;
 use anyhow::Result;
 
 /// User-facing message shown the first time a notification flag is
@@ -52,6 +58,13 @@ pub fn error(_step_label: &str) -> Result<()> {
     Ok(())
 }
 
+/// Fire a notification for a hand-back whose "tests pass" claim got
+/// `verdict`. Best-effort.
+#[cfg(not(feature = "notifications"))]
+pub fn claim(_subagent: &str, _verdict: Verdict) -> Result<()> {
+    Ok(())
+}
+
 /// Fire an idle notification. Best-effort.
 #[cfg(not(feature = "notifications"))]
 pub fn idle(_duration_s: u64) -> Result<()> {
@@ -64,12 +77,18 @@ pub fn error(step_label: &str) -> Result<()> {
 }
 
 #[cfg(feature = "notifications")]
+pub fn claim(subagent: &str, verdict: Verdict) -> Result<()> {
+    real::claim(subagent, verdict)
+}
+
+#[cfg(feature = "notifications")]
 pub fn idle(duration_s: u64) -> Result<()> {
     real::idle(duration_s)
 }
 
 #[cfg(feature = "notifications")]
 mod real {
+    use crate::claims::Verdict;
     use anyhow::{Context, Result};
     use notify_rust::Notification;
 
@@ -80,6 +99,16 @@ mod real {
             .appname("agx")
             .show()
             .with_context(|| "failed to emit error notification")?;
+        Ok(())
+    }
+
+    pub(super) fn claim(subagent: &str, verdict: Verdict) -> Result<()> {
+        Notification::new()
+            .summary(&format!("agx: subagent claim {}", verdict.as_str()))
+            .body(subagent)
+            .appname("agx")
+            .show()
+            .with_context(|| "failed to emit claim notification")?;
         Ok(())
     }
 
@@ -110,6 +139,7 @@ mod tests {
         // Feature-off path must not error — callers rely on it to be
         // a silent no-op so the live event loop can blindly call it.
         assert!(error("anything").is_ok());
+        assert!(claim("anything", Verdict::Contradicted).is_ok());
         assert!(idle(30).is_ok());
     }
 }

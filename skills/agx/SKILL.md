@@ -99,6 +99,8 @@ failed), `stale` (code edited after the run), `unverified` (no run
 found, a run that executed no tests, or a name-filtered run behind an
 "all tests pass" claim). Raise anything but `supported`, and present `supported` as
 "the transcript backs the claim", not as proof the tests are good.
+To get these as alerts while a session runs, the user can open
+`agx --live --notify-on-claims <session>` in a terminal.
 
 **Slice a long session** before exporting or summarizing:
 `--after 10m`, `--before 1h`, `--after-step 100`, `--before-step 200`, or

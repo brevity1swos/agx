@@ -22,12 +22,12 @@
 //! Every field is optional here so drift degrades to missing links rather
 //! than a failed load.
 
-use crate::claims::{self, ClaimCheck};
+use crate::claims::{self, ClaimCheck, Verdict};
 use crate::session;
 use crate::timeline::{self, Step};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -157,6 +157,88 @@ pub fn load_tree(session_path: &Path) -> Result<SessionTree> {
         steps,
         subagents,
     })
+}
+
+/// A hand-back whose "tests pass" claim the subagent's transcript doesn't
+/// back: any verdict but `supported`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimAlert {
+    pub agent_id: String,
+    pub description: Option<String>,
+    pub verdict: Verdict,
+}
+
+/// Watches a live session for new hand-back reports. Reports already in
+/// the transcripts when the watch starts count as seen, so only reports
+/// that arrive later can raise an alert.
+#[derive(Debug)]
+pub struct HandbackWatch {
+    session: PathBuf,
+    /// Hand-backs across every transcript at the last successful poll.
+    /// Counting is a substring scan, so the tree is rebuilt only when
+    /// this changes.
+    handbacks: usize,
+    /// `(agent id, report count)` pairs already checked.
+    seen: HashSet<(String, usize)>,
+}
+
+impl HandbackWatch {
+    pub fn new(session: &Path) -> Self {
+        let mut watch = Self {
+            session: session.to_path_buf(),
+            handbacks: 0,
+            seen: HashSet::new(),
+        };
+        watch.poll();
+        watch
+    }
+
+    /// Alerts for reports that arrived since the previous poll.
+    pub fn poll(&mut self) -> Vec<ClaimAlert> {
+        let handbacks = count_handbacks(&self.session);
+        if handbacks == self.handbacks {
+            return Vec::new();
+        }
+        let Ok(tree) = load_tree(&self.session) else {
+            return Vec::new();
+        };
+        self.handbacks = handbacks;
+        tree.subagents
+            .into_iter()
+            .filter_map(|sub| {
+                if !self.seen.insert((sub.agent_id.clone(), sub.reports.len())) {
+                    return None;
+                }
+                let verdict = sub.claim_check?.verdict;
+                (verdict != Verdict::Supported).then_some(ClaimAlert {
+                    agent_id: sub.agent_id,
+                    description: sub.description,
+                    verdict,
+                })
+            })
+            .collect()
+    }
+}
+
+/// Hand-backs in the session and every subagent transcript beside it.
+/// Nested subagents report into their spawner's transcript, not the
+/// session's, so all of them are counted.
+fn count_handbacks(session: &Path) -> usize {
+    let mut paths = vec![session.to_path_buf()];
+    if let Some(dir) = subagents_dir(session)
+        && let Ok(entries) = std::fs::read_dir(dir)
+    {
+        paths.extend(
+            entries
+                .filter_map(|e| Some(e.ok()?.path()))
+                .filter(|p| p.extension().is_some_and(|x| x == "jsonl")),
+        );
+    }
+    paths
+        .iter()
+        .filter_map(|p| scan_handbacks(p).ok())
+        .map(|reports| reports.values().map(Vec::len).sum::<usize>())
+        .sum()
 }
 
 fn discover(dir: &Path) -> Result<Vec<Subagent>> {
@@ -439,6 +521,83 @@ mod tests {
         let body = "[Subagent hand-back] preamble. The report follows:\n  line one\n  \n  - item";
         assert_eq!(report_from_body(body), "line one\n\n- item");
         assert_eq!(report_from_body("no marker"), "no marker");
+    }
+
+    /// A subagent transcript whose only test run failed.
+    fn failing_run(uuid: &str) -> [String; 2] {
+        [
+            format!(
+                r#"{{"type":"assistant","uuid":"{uuid}a","parentUuid":null,"message":{{"role":"assistant","content":[{{"type":"tool_use","id":"t-{uuid}","name":"Bash","input":{{"command":"cargo test"}}}}]}}}}"#
+            ),
+            format!(
+                r#"{{"type":"user","uuid":"{uuid}b","parentUuid":"{uuid}a","message":{{"role":"user","content":[{{"type":"tool_result","tool_use_id":"t-{uuid}","content":"test result: FAILED. 15 passed; 2 failed; 0 ignored"}}]}}}}"#
+            ),
+        ]
+    }
+
+    fn append(path: &Path, line: &str) {
+        use std::io::Write;
+        let mut f = fs::OpenOptions::new().append(true).open(path).unwrap();
+        writeln!(f, "{line}").unwrap();
+    }
+
+    #[test]
+    fn watch_alerts_once_on_a_new_contradicted_handback() {
+        let (tmp, session) = fixture();
+        let mut watch = HandbackWatch::new(&session);
+        assert!(watch.poll().is_empty());
+
+        let dir = tmp.path().join("s1/subagents");
+        write(&dir.join("agent-ddd.jsonl"), &failing_run("d"));
+        fs::write(
+            dir.join("agent-ddd.meta.json"),
+            r#"{"description":"fix parser","toolUseId":"toolu_D"}"#,
+        )
+        .unwrap();
+        append(&session, &handback("ddd", "Done. All tests pass."));
+
+        let alerts = watch.poll();
+        assert_eq!(
+            alerts,
+            vec![ClaimAlert {
+                agent_id: "ddd".into(),
+                description: Some("fix parser".into()),
+                verdict: Verdict::Contradicted,
+            }]
+        );
+        assert!(watch.poll().is_empty());
+    }
+
+    #[test]
+    fn watch_ignores_handbacks_present_at_start() {
+        let (tmp, session) = fixture();
+        let dir = tmp.path().join("s1/subagents");
+        write(&dir.join("agent-ddd.jsonl"), &failing_run("d"));
+        append(&session, &handback("ddd", "All tests pass."));
+        let mut watch = HandbackWatch::new(&session);
+        assert!(watch.poll().is_empty());
+
+        // A later report from the same subagent is new and is checked.
+        append(&session, &handback("ddd", "Fixed it, all tests pass now."));
+        assert_eq!(watch.poll().len(), 1);
+    }
+
+    #[test]
+    fn watch_counts_nested_handbacks() {
+        let (tmp, session) = fixture();
+        let mut watch = HandbackWatch::new(&session);
+        let dir = tmp.path().join("s1/subagents");
+        // bbb reports into its spawner aaa's transcript, not the session's.
+        let mut lines = vec![user("y1", "inner task")];
+        lines.extend(failing_run("b"));
+        write(&dir.join("agent-bbb.jsonl"), &lines);
+        append(
+            &dir.join("agent-aaa.jsonl"),
+            &handback("bbb", "All tests pass."),
+        );
+        let alerts = watch.poll();
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].agent_id, "bbb");
     }
 
     #[test]

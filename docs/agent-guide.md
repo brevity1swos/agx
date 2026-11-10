@@ -228,6 +228,12 @@ number the report stated, if any. Raise anything other than
 `supported` with the user. `supported` means the transcript backs the
 claim, not that the tests are good.
 
+To be told as reports arrive rather than asking afterwards, the user
+can watch the session with `agx --live --notify-on-claims <session>`.
+Each new hand-back whose verdict isn't `supported` shows in the status
+bar, and as a desktop notification on builds with `--features
+notifications`. Reports already in the session at launch don't alert.
+
 ### "Is agx-mcp / sift / rgx installed?"
 
 ```bash

@@ -68,6 +68,18 @@ pub enum Verdict {
     Unverified,
 }
 
+impl Verdict {
+    /// The verdict as it appears in `--json` output.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Supported => "supported",
+            Self::Contradicted => "contradicted",
+            Self::Stale => "stale",
+            Self::Unverified => "unverified",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ClaimCheck {
     /// The report sentence that claims tests pass.
