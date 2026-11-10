@@ -6,6 +6,16 @@ Stability commitments — which fields, flags, and APIs will or won't change acr
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-11-10
+
+### Bug Fixes
+
+- *(deps)* Bump openssl to 0.10.82 for RUSTSEC-2026-0463
+openssl 0.10.77 has an out-of-bounds write in aes::unwrap_key. It only
+  enters through the optional embedding-search feature (fastembed's
+  native-tls stack), so default builds were not affected.
+
+
 ## [0.3.3] - 2026-11-07
 
 ### Bug Fixes
